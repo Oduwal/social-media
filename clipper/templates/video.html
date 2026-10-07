@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{# before the clips exist a plain refresh is fine; once they do, _progress.html updates live #}
+{% set refresh = 10 if cli_busy or (job.state in ("DETECTED","DOWNLOADED","HIGHLIGHTED") and not job.hold) else none %}
+{% block title %}Video {{ job.video_id }}{% endblock %}
+{% block header %}<span class="state s-{{ job.state|lower }}">{{ job.state }}</span>{% endblock %}
+{% block body %}
+{% set info = job.info or {} %}
+<h1>{{ info.get("title", "")[:90] or job.video_id }}</h1>
+<p class="small"><a href="{{ job.url }}" target="_blank" rel="noopener">Original TikTok ↗</a>
+  {% if info.get("resolution") %} · downloaded at {{ info.resolution }}{% endif %}
+  {% if info.get("duration") %} · {{ (info.duration / 60) | round(1) }} min{% endif %}
+  {% if info.get("highlights") is not none %} · Gemini found {{ info.highlights }} highlight{{ "s" if info.highlights != 1 }}{% endif %}</p>
+
+{% if cli_busy %}
+  <div class="banner info"><b>The terminal is working on this video</b> (<code>python -m clipper run</code>). This page refreshes itself.</div>
+{% elif job.hold and job.state in ("DETECTED","DOWNLOADED","HIGHLIGHTED") %}
+  <div class="banner info"><b>Held after {{ job.state }}</b> (stopped early from the terminal).
+    <form method="post" action="/jobs/{{ job.video_id }}/continue" class="inline"><button class="btn primary">Continue</button></form></div>
+{% endif %}
+{% if job.state == "FAILED" %}
+  <div class="banner bad"><b>Failed at “{{ job.failed_step }}”.</b>
+    <form method="post" action="/jobs/{{ job.video_id }}/retry" class="inline"><button class="btn">Retry this step</button></form>
+    <details><summary>Details</summary><pre>{{ job.error }}</pre></details></div>
+{% elif job.state in ("DETECTED","DOWNLOADED","HIGHLIGHTED") and not job.hold %}
+  <div class="banner info">Working: {{ {"DETECTED": "downloading", "DOWNLOADED": "Gemini is watching the video", "HIGHLIGHTED": "saving the highlights"}[job.state] }}… this page refreshes itself.</div>
+{% elif job.state in ("SKIPPED", "REJECTED") %}
+  <form method="post" action="/jobs/{{ job.video_id }}/process"><button class="btn primary">Process this video</button></form>
+{% endif %}
+
+{% if clips %}
+  {% include "_progress.html" %}
+  {% set back = "/jobs/" ~ job.video_id %}
+  {% include "_grid.html" %}
+{% endif %}
+{% endblock %}

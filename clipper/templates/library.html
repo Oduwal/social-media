@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Library{% endblock %}
+{% block body %}
+<div class="row between">
+  <h1>Library{% if video %} · <a href="/jobs/{{ video.video_id }}">{{ (video.info or {}).get("title", "")[:60] or video.video_id }}</a>{% endif %}</h1>
+  {% if video %}<a class="small" href="/library?tab={{ tab }}">show all videos</a>{% endif %}
+</div>
+
+{% include "_progress.html" %}
+
+<div class="tabs">
+  {% for key, (label, n) in tabs.items() %}
+    <a href="/library?tab={{ key }}{% if video %}&video={{ video.video_id }}{% endif %}" class="tab {{ 'active' if key == tab }}">{{ label }} <span class="count">{{ n }}</span></a>
+  {% endfor %}
+</div>
+
+{% if tab == "preview" %}
+<p class="muted small">These are cut but not transformed yet, so they cost nothing. Hover to play. Pick the ones worth making albino:
+  each costs about one Omni edit per 10 seconds.</p>
+{% elif tab == "ready" %}
+<p class="muted small">Transformed and mixed. Open one to change the music and caption, then post it.</p>
+{% endif %}
+
+{% set back = "/library?tab=" ~ tab ~ ("&video=" ~ video.video_id if video else "") %}
+{% include "_grid.html" %}
+{% endblock %}

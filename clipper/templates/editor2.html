@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Edit · {{ (job.info or {}).get("title") or job.video_id }} · Clipper</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="{{ asset('ed2/editor.css') }}">
+</head>
+<body class="ed2">
+<header id="topbar">
+  <a class="brand" href="/jobs/{{ job.video_id }}" title="Back to the clip">✂ Clipper</a>
+  <span class="ptitle">{{ (job.info or {}).get("title") or job.video_id }}</span>
+  <button class="ib" id="b-undo" title="Undo (Ctrl+Z)">↶</button>
+  <button class="ib" id="b-redo" title="Redo (Ctrl+Shift+Z)">↷</button>
+  <span class="grow"></span>
+  <span class="muted small" id="savestate"></span>
+  <button class="ib" id="b-help" title="Shortcuts (?)">?</button>
+  <button class="ib" id="b-theme" title="Light / dark">◐</button>
+  <a class="btn small" href="/jobs/{{ job.video_id }}">Close</a>
+  <button class="btn primary" id="b-save" {% if not editor_data.editable %}title="This clip can't be re-rendered right now; your work is kept as a draft"{% endif %}>Save &amp; render</button>
+</header>
+
+<main id="work">
+  <aside id="left" class="panel">
+    <nav class="ptabs">
+      <button class="ptab on" data-page="media">Media</button>
+      <button class="ptab" data-page="catalog">Catalog</button>
+      <button class="ptab" data-page="captions">Captions</button>
+      <button class="ptab" data-page="ai">AI</button>
+    </nav>
+    <div class="ppage" data-page="media" id="p-media"></div>
+    <div class="ppage" data-page="catalog" id="p-catalog" hidden></div>
+    <div class="ppage" data-page="captions" id="p-captions" hidden></div>
+    <div class="ppage" data-page="ai" id="p-ai" hidden></div>
+  </aside>
+
+  <section id="center">
+    <div class="ctools">
+      <button class="ib tog" id="b-safe" title="Show where TikTok / Reels put their buttons">Safe zones</button>
+      <button class="ib tog" id="b-grid" title="Thirds grid">Grid</button>
+      <span class="grow"></span>
+      <button class="ib" id="b-text" title="Add a title at the playhead">+ Text</button>
+    </div>
+    <div id="stagearea">
+      <div id="stage" class="stage">
+        <div id="canvas" class="canvas">
+          <div class="layer" id="l-main"></div>
+          <div class="layer" id="l-tfx"></div>
+          <div class="layer" id="l-ov"></div>
+          <div class="layer" id="l-txt"></div>
+          <div class="layer" id="l-fade"></div>
+          <div class="layer" id="l-guides"></div>
+          <div class="snapv"></div><div class="snaph"></div>
+        </div>
+        <div id="selbox" hidden>
+          <span class="hdl rot" data-h="rotate" title="Rotate"></span>
+          <span class="hdl sc" data-h="scale" title="Resize"></span>
+        </div>
+      </div>
+    </div>
+    <div class="transport">
+      <button class="ib" id="b-start" title="Start (Home)">⏮</button>
+      <button class="ib big" id="b-play" title="Play / pause (Space)">▶</button>
+      <button class="ib" id="b-end" title="End (End)">⏭</button>
+      <span class="mono" id="clock">0:00.0 / 0:00.0</span>
+      <span class="grow"></span>
+      <span class="muted small">Preview is close; the render is exact.</span>
+    </div>
+  </section>
+
+  <aside id="right" class="panel">
+    <nav class="ptabs">
+      <button class="ptab on" data-page="design">Design</button>
+      <button class="ptab" data-page="layers">Layers</button>
+      <button class="ptab" data-page="export">Export</button>
+    </nav>
+    <div class="ppage" data-page="design" id="p-design"></div>
+    <div class="ppage" data-page="layers" id="p-layers" hidden></div>
+    <div class="ppage" data-page="export" id="p-export" hidden></div>
+  </aside>
+</main>
+
+<section id="timeline">
+  <div class="tltools">
+    <button class="ib" id="b-split" title="Split at playhead (S)">✂ Split</button>
+    <button class="ib" id="b-dup" title="Duplicate (Ctrl+D)">⧉</button>
+    <button class="ib" id="b-del" title="Delete (Del)">🗑</button>
+    <span class="sep"></span>
+    <button class="ib tog" id="b-snap" title="Snap to edges, playhead and beats">🧲 Snap</button>
+    <button class="ib tog" id="b-ripple" title="Ripple: deleting closes the gap">⇤ Ripple</button>
+    <button class="ib" id="b-beat" title="Add a beat marker at the playhead (B)">◆ Beat</button>
+    <button class="ib" id="b-addtrack" title="Add a track">＋ Track</button>
+    <span class="grow"></span>
+    <input type="range" id="tl-zoom" min="0.7" max="6" step="0.01" title="Zoom (Ctrl + mouse wheel)">
+    <button class="ib" id="b-fit" title="Fit the whole video">Fit</button>
+  </div>
+  <div class="tlbody">
+    <div id="tl-heads"></div>
+    <div id="tl-scroll">
+      <div id="tl-ruler"></div>
+      <div id="tl-markers"></div>
+      <div id="tl-lanes"></div>
+      <div id="tl-playhead"></div>
+      <div id="tl-snap" hidden></div>
+    </div>
+  </div>
+</section>
+
+<div id="help" class="modal" hidden>
+  <div class="mbox">
+    <h3>Shortcuts</h3>
+    <table class="small">
+      <tr><td>Space</td><td>Play / pause</td></tr><tr><td>S</td><td>Split at playhead</td></tr>
+      <tr><td>Del</td><td>Delete selected</td></tr><tr><td>Ctrl+D</td><td>Duplicate</td></tr>
+      <tr><td>Ctrl+C / Ctrl+V</td><td>Copy / paste at playhead</td></tr><tr><td>Ctrl+Z / Ctrl+Shift+Z</td><td>Undo / redo</td></tr>
+      <tr><td>B</td><td>Beat marker (things snap to it)</td></tr><tr><td>← →</td><td>One frame (Shift: one second)</td></tr>
+      <tr><td>+ / −, Ctrl+wheel</td><td>Zoom the timeline</td></tr><tr><td>Ctrl+S</td><td>Save &amp; render</td></tr>
+      <tr><td>Double-click text</td><td>Edit it</td></tr><tr><td>Alt+click beat</td><td>Remove it</td></tr>
+    </table>
+    <p class="small muted">◆ next to a setting adds a keyframe at the playhead. Once a setting has keyframes, changing it adds or updates one.</p>
+    <button class="btn" id="help-close">Close</button>
+  </div>
+</div>
+
+<script id="editor-data" type="application/json">{{ editor_data | tojson }}</script>
+<script type="module" src="{{ asset('ed2/main.js') }}"></script>
+</body>
+</html>

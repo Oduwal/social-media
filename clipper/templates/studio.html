@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Edit · {{ (job.info or {}).get("title") or job.video_id }}{% endblock %}
+{% block header %}
+  <a class="btn" href="/jobs/{{ job.video_id }}">Back to clip</a>
+  {% if url %}<a class="btn" href="{{ url }}" target="_blank" rel="noopener">Open full screen ↗</a>{% endif %}
+  {% if editable and url %}
+    <form method="post" action="/jobs/{{ job.video_id }}/studio/use"
+          onsubmit="return confirm('Render this version as the clip\'s final video? It takes a minute or two.')">
+      <button class="btn primary">Use this version</button></form>
+  {% endif %}
+{% endblock %}
+{% block body %}
+{% if error %}
+  <div class="banner bad">The editor (HyperFrames Studio) couldn't start: {{ error }}</div>
+  <p><a class="btn" href="/jobs/{{ job.video_id }}/edit/simple">Use the simple editor instead</a></p>
+{% else %}
+  {% if not editable %}
+    <div class="banner warn">This clip is {{ job.state }}, so its final video can't be changed right now. You can still edit;
+      <b>Use this version</b> comes back when the clip is waiting to be posted.</div>
+  {% endif %}
+  <p class="muted small">
+    Drag and trim on the timeline, click text on the video to change it. Changes save by themselves.
+    When it looks right, click <b>Use this version</b>: Clipper renders it as the clip's final video
+    {% if in_use %}(it's already the source of this clip's final video){% endif %}.
+    For TikTok, a version without the music is made when you pick a trending sound.
+  </p>
+  <iframe class="studio" src="{{ url }}" title="HyperFrames Studio" allow="autoplay; clipboard-write"></iframe>
+  <div class="row small">
+    <form method="post" action="/jobs/{{ job.video_id }}/studio/fresh"
+          onsubmit="return confirm('Throw away your changes in Studio and start again from this clip?')">
+      <button class="btn small danger">Start over</button></form>
+    <a class="muted" href="/jobs/{{ job.video_id }}/edit/simple">Simple editor</a>
+    <span class="muted">· Studio by <a href="https://github.com/heygen-com/hyperframes" target="_blank" rel="noopener">HyperFrames</a>, running on this PC</span>
+  </div>
+{% endif %}
+{% endblock %}

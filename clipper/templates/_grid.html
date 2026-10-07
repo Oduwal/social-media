@@ -1,0 +1,50 @@
+{# A grid of clips. In PREVIEW they get checkboxes so several can be picked at once. #}
+{% set pickable = clips | selectattr("state", "equalto", "PREVIEW") | list %}
+<form method="post" action="/clips/pick" id="pickform">
+  <input type="hidden" name="back" value="{{ back }}">
+  {% if pickable %}
+  <div class="pickbar card">
+    <label class="row"><input type="checkbox" id="checkall"> Select all</label>
+    <span class="muted small" id="picksummary">Tick the clips you want, then choose what to do with them.</span>
+    <span class="grow"></span>
+    <button class="btn primary" name="mode" value="albino" onclick="return confirmPick(this)">Make albino</button>
+    <button class="btn" name="mode" value="original" title="Skip the transform: add music and post the clip as it is">Use as is</button>
+    <button class="btn danger" name="mode" value="discard">Discard</button>
+  </div>
+  {% endif %}
+
+  <div class="clipgrid">
+  {% for c in clips %}
+    <div class="clipcard {{ 's-' ~ c.state|lower }}">
+      {% if c.state == "NEW" %}
+      <div class="thumb"><div class="thumb-empty">✂ cutting…</div><span class="dur">{{ "%d"|format(c|cliplen) }}s</span></div>
+      {% else %}
+      {# click: play here with sound (click again to pause); hover: silent peek; title: open the clip #}
+      <div class="thumb playable" title="Click to play with sound">
+        <video src="/media/{{ c.video_id }}/{{ 'final.mp4' if c.state in ('READY','APPROVED','POSTING','POSTED') else 'highlight.mp4' }}"
+               poster="/media/{{ c.video_id }}/thumb.jpg" preload="none" muted playsinline loop class="hoverplay"></video>
+        <span class="playicon">▶</span>
+        <span class="dur">{{ "%d"|format(c|cliplen) }}s</span>
+      </div>
+      {% endif %}
+      <div class="cardbody">
+        <div class="row between">
+          {% if c.state == "PREVIEW" %}<label class="row"><input type="checkbox" name="ids" value="{{ c.video_id }}" class="pick" data-edits="{{ c|edits }}"> <b class="small">Pick</b></label>{% endif %}
+          <span class="state s-{{ c.state|lower }}">{{ c.state }}</span>
+          <span class="muted small">{{ (c.clip or {}).get("score", "?") }}/10</span>
+        </div>
+        <a href="/jobs/{{ c.video_id }}" class="cliptitle">{{ (c.info or {}).get("title") or c.video_id }}</a>
+        {% set people = (c.clip or {}).get("people_count") or 0 %}
+        {% if people > 1 %}
+          {% if c.target %}<span class="people muted" title="Only this person is changed: {{ c.target }}">👥 {{ people }} people · {{ c.target[:40] }}{{ "…" if c.target|length > 40 }}</span>
+          {% else %}<a class="people warn-text" href="/jobs/{{ c.video_id }}">👥 {{ people }} people · say who to change</a>{% endif %}
+        {% endif %}
+        <div class="muted small">{{ (c.clip or {}).get("start_mmss", "") }}–{{ (c.clip or {}).get("end_mmss", "") }}
+          {% if c.transform_mode == "original" %} · as is{% elif c.transform_info and c.transform_info.enabled %} · albino{% endif %}</div>
+      </div>
+    </div>
+  {% else %}
+    <p class="muted">No clips here.</p>
+  {% endfor %}
+  </div>
+</form>

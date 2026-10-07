@@ -1,0 +1,13 @@
+{# Live progress for the library and video pages: polled by app.js, no page refresh needed.
+   Guarded with "is defined" so a page rendered by an older running Clipper still works. #}
+{% if progress is defined %}
+<div class="banner info progress" id="progress" data-video="{{ progress_video }}"
+     data-signature="{{ progress.signature }}"{% if not (progress.cutting or progress.finding) %} hidden{% endif %}>
+  <span id="progresstext">
+    {% if progress.finding %}🔎 Gemini is watching the video for highlights…
+    {% else %}✂ Cutting highlights: {{ progress.cut }} of {{ progress.total }} ready{% endif %}
+  </span>
+  <div class="bar"><span id="progressbar" style="width: {{ (100 * progress.cut / progress.total) | round if progress.total else 0 }}%"></span></div>
+  <button type="button" class="btn small primary" id="progressshow" hidden>Show new previews</button>
+</div>
+{% endif %}

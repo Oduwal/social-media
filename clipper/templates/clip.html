@@ -1,0 +1,386 @@
+{% extends "base.html" %}
+{% set refresh = 10 if (job.state in ("NEW","CUT","TRANSFORMED","APPROVED","POSTING") and (not job.hold or cli_busy)) or (job.sound or {}).get("status") == "working" else none %}
+{% block title %}Clip {{ job.video_id }}{% endblock %}
+{% block header %}<span class="state s-{{ job.state|lower }}">{{ job.state }}</span>{% endblock %}
+{% block body %}
+{% set ti = job.transform_info or {} %}
+{% set pr = job.post_result or {} %}
+
+<h1>{{ (job.info or {}).get("title") or job.video_id }}</h1>
+<p class="small"><a href="/jobs/{{ job.parent_id }}">← {{ ((parent or {}).get("info") or {}).get("title", "")[:60] or "the video" }}</a>
+  · <a href="{{ job.url }}" target="_blank" rel="noopener">Original TikTok ↗</a>
+  {% if job.cut_range %} · {{ clip.get("start_mmss", "") }}–{{ clip.get("end_mmss", "") }} ({{ "%.0f"|format(job.cut_range.end - job.cut_range.start) }} s){% endif %}
+  {% if clip.get("score") %} · score {{ clip.score }}/10{% endif %}</p>
+
+{% if cli_busy and job.state == "NEW" %}
+  <div class="banner info"><b>The terminal is cutting this video's highlights</b> (<code>python -m clipper run</code>). This page refreshes itself.</div>
+{% elif job.hold and job.state in ("NEW","CUT","TRANSFORMED") %}
+  <div class="banner info">
+    <b>Held</b> (from the terminal){% if job.state == "CUT" %} – continuing runs the paid Omni transform{% endif %}.
+    <form method="post" action="/jobs/{{ job.parent_id }}/continue" class="inline"><button class="btn primary">Continue</button></form>
+  </div>
+{% endif %}
+{% if job.state == "PREVIEW" %}
+  {% set people = clip.get("people_count") or 0 %}
+  <form method="post" action="/clips/pick" class="banner {{ 'warn' if people > 1 else 'info' }} pickone">
+    <input type="hidden" name="ids" value="{{ job.video_id }}">
+    <input type="hidden" name="back" value="/jobs/{{ job.video_id }}">
+    <p>This highlight is cut but not transformed. Making it albino costs about <b>{{ job|edits }}</b> Omni edit{{ "s" if (job|edits) != 1 }}.</p>
+    <label class="small"><b>Who to make albino</b>
+      {% if people > 1 %}<span class="warn-text">· Gemini sees {{ people }} people in this clip: check this describes the right one</span>
+      {% else %}<span class="muted">· leave empty if only one person is in the clip</span>{% endif %}
+      <textarea name="target_{{ job.video_id }}" rows="2" maxlength="300"
+        placeholder="e.g. the man in the blue striped shirt in the driver's seat">{{ job.target or "" }}</textarea>
+      <span class="muted">Describe how they look and where they are. Don't write "the speaker" or "the person talking":
+        Google reads that as a speech edit and refuses.</span></label>
+    <div class="row">
+      <button class="btn primary" name="mode" value="albino">Make albino</button>
+      <button class="btn" name="mode" value="original">Use as is</button>
+      <button class="btn danger" name="mode" value="discard">Discard</button>
+    </div>
+  </form>
+{% elif job.state == "LOOK" %}
+  <section class="banner info look">
+    <b>Approve the albino look.</b> Omni turned one frame of this clip into the albino look. Every 10-second piece
+    will be told to match it exactly, so the whole clip stays consistent.
+    <div class="lookpair">
+      <figure><img src="/media/{{ job.video_id }}/look_source.jpg?v={{ mtime }}" alt="original frame"><figcaption>original</figcaption></figure>
+      <figure><img src="/media/{{ job.video_id }}/look.jpg?v={{ mtime }}" alt="albino look"><figcaption>the look</figcaption></figure>
+    </div>
+    <div class="row">
+      <form method="post" action="/jobs/{{ job.video_id }}/look/approve"><button class="btn primary">Use this look (≈ {{ job|edits }} Omni edits)</button></form>
+      <form method="post" action="/jobs/{{ job.video_id }}/look/redo"><button class="btn">Try another look (1 edit)</button></form>
+      <form method="post" action="/jobs/{{ job.video_id }}/look/skip"><button class="btn">Skip the reference</button></form>
+    </div>
+  </section>
+{% elif job.state in ("CUT", "TRANSFORMED") and not job.hold %}
+  <div class="banner info">{{ "Making it albino (Omni)…" if job.state == "CUT" and job.transform_mode != "original" else "Rendering your edit (about a minute)…" }} this page refreshes itself.</div>
+{% endif %}
+{% if job.state == "FAILED" %}
+  <div class="banner bad">
+    <b>Failed at “{{ job.failed_step }}”.</b>
+    <form method="post" action="/jobs/{{ job.video_id }}/retry" class="inline"><button class="btn">Retry this step</button></form>
+    <details><summary>Details</summary><pre>{{ job.error }}</pre></details>
+  </div>
+{% elif job.error %}
+  <div class="banner warn">{{ job.error }}</div>
+{% endif %}
+
+{% if ti.blocked %}
+  <div class="banner bad"><b>Google refused the albino edit</b>, so this clip is the ORIGINAL footage and the AI label is off.
+    Google's reason: “{{ ti.blocked }}”. Retrying gives the same answer, so Clipper stopped instead of
+    trying every segment. You can still post it as it is, or discard it.</div>
+{% elif ti.refused %}
+  <div class="banner bad">Every segment of the albino edit failed, so this clip is the ORIGINAL footage and the AI label is off.
+    “Internal error” failures are on Google's side and usually work on a retry.
+    {% if job.state == "READY" and ti.enabled %}<form method="post" action="/jobs/{{ job.video_id }}/retransform" class="inline"><button class="btn">Retry the albino edit</button></form>{% endif %}</div>
+{% elif ti.fallback_segments %}
+  <div class="banner warn">Segment(s) {{ ti.fallback_segments|join(", ") }} of {{ ti.segments }} kept the original footage (the edit failed).
+    {% if job.state == "READY" %}<form method="post" action="/jobs/{{ job.video_id }}/retransform" class="inline"><button class="btn">Retry those segments</button></form>{% endif %}</div>
+{% endif %}
+{% if job.state == "READY" and ti.enabled %}
+  <form method="post" action="/jobs/{{ job.video_id }}/retransform" class="card"
+        onsubmit="return confirm('Redo the albino edit for this person? It costs about {{ job|edits }} paid Omni edits.')">
+    <h2>Who was made albino</h2>
+    <p class="small">{% if ti.target %}Only: <b>{{ ti.target }}</b>{% else %}The person in the clip (no one was named){% endif %}</p>
+    {% if ti.model %}<p class="muted small">Model {{ ti.model }}{% if ti.strict_look %} · strict look{% endif %}
+      {% if ti.reference %} · matched to your approved look{% elif ti.reference_rejected %} · <span class="warn-text">Google wouldn't take the reference picture, so it ran without it</span>{% endif %}</p>{% endif %}
+    <details{% if (clip.get("people_count") or 0) > 1 %} open{% endif %}><summary class="small">Wrong person, or someone else changed too? Name who to change and redo it</summary>
+      <textarea name="target" rows="2" maxlength="300" placeholder="e.g. the man in the blue striped shirt in the driver's seat">{{ job.target or "" }}</textarea>
+      <button class="btn">Redo for this person (≈ {{ job|edits }} Omni edits)</button>
+    </details>
+  </form>
+  {% if ti.pieces %}
+  <section class="card">
+    <h2>The {{ ti.pieces|count }} pieces</h2>
+    <p class="muted small">Omni edits each 10-second piece on its own, so they can come out a little different.
+      {% if ti.colour_match %}Clipper has already evened out their brightness and tint.{% endif %}
+      If one has freckles or patches, redo just that one (about 1 Omni edit; the others are kept for free).</p>
+    <div class="pieces">
+      {% for p in ti.pieces %}
+      <div class="piece">
+        <video src="/media/{{ job.video_id }}/piece/{{ p.index }}?v={{ mtime }}" preload="metadata" muted playsinline
+               controls></video>
+        <div class="small"><b>Piece {{ p.index }}</b> ·
+          {% if p.kind == "albino" %}albino{% elif p.kind == "sliver" %}<span class="muted">short end (original)</span>{% else %}<span class="warn-text">original (edit failed)</span>{% endif %}</div>
+        {% if p.get("shift") and (p.shift[0]|abs) >= 2 %}<div class="muted small">{{ "lightened" if p.shift[0] > 0 else "darkened" }} by {{ p.shift[0]|abs|round|int }}</div>{% endif %}
+        {% if p.kind != "sliver" %}
+        <form method="post" action="/jobs/{{ job.video_id }}/redo_piece" onsubmit="return confirm('Redo piece {{ p.index }}? About 1 paid Omni edit.')">
+          <input type="hidden" name="index" value="{{ p.index }}"><button class="btn small">Redo this piece</button></form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+{% endif %}
+{% if ti and ti.enabled and not ti.original_audio %}
+  <div class="banner info">Edited segments changed length by up to {{ ti.max_segment_drift_s }}s, so the edited video's own audio was kept instead of the original.</div>
+{% endif %}
+
+{% if pr.platforms or pr.pending %}
+<section class="card">
+  <h2>Posting results</h2>
+  <ul class="results">
+  {% for name, r in (pr.platforms or {}).items() %}
+    <li><b>{{ name }}</b>:
+      {% if r.ok and r.drafted and pr.get("service") == "direct" %}<span class="ok-text">in your TikTok inbox</span> – open TikTok, tap the notification, add a sound and your caption, and post
+      {% elif r.ok and r.drafted %}<span class="warn-text">sent to drafts, NOT published (TikTok daily limit)</span>
+      {% elif r.ok and r.manual %}<span class="ok-text">posted (marked by you)</span>
+      {% elif r.ok %}<span class="ok-text">posted</span>{% if r.message and r.message != "Posted" %} · {{ r.message }}{% endif %}{% if r.url %} – <a href="{{ r.url }}" target="_blank" rel="noopener">open ↗</a>{% endif %}
+      {% else %}<span class="bad-text">failed</span> {{ r.message }}{% endif %}</li>
+  {% endfor %}
+  {% for name in (pr.pending or {}) %}
+    <li><b>{{ name }}</b>: <span class="warn-text">uploaded, waiting for {{ name }} to confirm</span>
+      {% if job.state == "FAILED" %}
+        <span class="small">If it's on your account, mark it; if it isn't, let Clipper upload it again:</span>
+        <form method="post" action="/jobs/{{ job.video_id }}/mark_posted" class="inline"><input type="hidden" name="platform" value="{{ name }}"><button class="btn small">It's posted</button></form>
+        <form method="post" action="/jobs/{{ job.video_id }}/forget_pending" class="inline"><input type="hidden" name="platform" value="{{ name }}"><button class="btn small">It wasn't posted, try again</button></form>
+      {% endif %}</li>
+  {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<div class="grid">
+  <section class="card">
+    <h2>{{ "Final clip" if files["final.mp4"] else "Preview" }}</h2>
+    {% if files["final.mp4"] %}
+      <video src="/media/{{ job.video_id }}/final.mp4?v={{ mtime }}" controls playsinline class="vid"></video>
+    {% elif files["highlight.mp4"] %}
+      <video src="/media/{{ job.video_id }}/highlight.mp4?v={{ mtime }}" controls playsinline class="vid"></video>
+    {% else %}<p class="muted">Working on it… this page refreshes itself.</p>{% endif %}
+    {% if files["highlight.mp4"] and files["final.mp4"] %}
+      <details><summary class="small">Compare with the untransformed highlight</summary>
+        <video src="/media/{{ job.video_id }}/highlight.mp4?v={{ mtime }}" controls playsinline class="vid"></video></details>
+    {% endif %}
+  </section>
+
+  <div>
+  {% if editable %}
+    {% set ed = (job.edit or {}) if not edit_summary else {} %}
+    {% if job.state == "FAILED" %}<p class="banner warn small">The render failed. Change the edit (or switch away from Shotcut) and save to try again.</p>{% endif %}
+    <section class="card">
+      <h2>Edit</h2>
+      {% if edit_summary %}
+      <p class="small">
+        <b>{{ "%.0f"|format(edit_summary.length) }} s</b> · {{ edit_summary.clips }} cut{{ "s" if edit_summary.clips != 1 }}
+        · {{ edit_summary.texts }} text{{ "s" if edit_summary.texts != 1 }} · {{ edit_summary.captions }} caption{{ "s" if edit_summary.captions != 1 }}
+        · {{ edit_summary.overlays }} sticker{{ "s" if edit_summary.overlays != 1 }}/image{{ "s" if edit_summary.overlays != 1 }}
+        · {{ edit_summary.sounds }} sound{{ "s" if edit_summary.sounds != 1 }} · look: <b>{{ edit_summary.look }}</b>
+      </p>
+      {% else %}
+      <p class="small">
+        Music: <b>{{ (ed.get("music") or {}).get("track") or job.music_track or "none" }}</b>
+        {% if ed %} · look: <b>{{ ed.get("filter", "none") }}</b>{% if ed.get("zoom", "none") != "none" %} · zoom{% endif %}
+          · {{ (ed.get("texts") or [])|count }} text{{ "s" if (ed.get("texts") or [])|count != 1 }}
+          · {{ "%.0f"|format(ed.trim.end - ed.trim.start) }} s{% endif %}
+      </p>
+      {% endif %}
+      {% if clip.get("music_mood") %}<p class="muted small">Gemini suggests a <b>{{ clip.music_mood }}</b> track.</p>{% endif %}
+      {% if (job.info or {}).get("render_from") == "studio" %}
+        <p class="banner info small">The final video comes from your <b>Studio</b> edit. Saving in the simple editor replaces it.</p>
+      {% endif %}
+      {% if (job.info or {}).get("render_from") == "shotcut" %}
+        <p class="banner info small">The final video comes from your <b>Shotcut</b> edit. Saving in the editor here replaces it.</p>
+      {% endif %}
+      <div class="row">
+        <a class="btn primary" href="/jobs/{{ job.video_id }}/editor">✎ Edit video</a>
+        <span class="muted small">timeline, captions, text, stickers, transitions, keyframes, music</span>
+        <a class="btn small" href="/jobs/{{ job.video_id }}/edit/simple">Simple editor</a>
+        <a class="btn small" href="/jobs/{{ job.video_id }}/studio" title="HyperFrames Studio: custom web graphics; its renders take several minutes">Open in Studio</a>
+      </div>
+    </section>
+
+    {% if sound is defined %}{# absent when an older running Clipper renders this page #}
+    <section class="card sound">
+      <h2>Trending TikTok sound</h2>
+      {% set chosen = sound.get("chosen") %}
+      {% if not trending_ready %}
+        <p class="muted small">Needs your Upload-Post key in <code>.env</code> (posting is set to go through Upload-Post).</p>
+      {% else %}
+        {% if via_upload_post %}
+        <p class="muted small">Attached to the <b>TikTok</b> post only (licensed, and your clip appears on the sound's page).
+          Instagram and X keep your editor music.</p>
+        {% else %}
+        <p class="muted small">For <b>TikTok</b>: add the sound yourself when you finish the draft in the TikTok app
+          (search its name there). Choosing one here makes Clipper send TikTok a version <b>without</b> your editor
+          music, so the two don't clash. Instagram and X keep your editor music.</p>
+        {% endif %}
+
+        {% if chosen %}
+          <div class="chosen">
+            <div class="row between"><b>♪ {{ chosen.title }}</b><span class="muted small">{{ chosen.artist }}</span></div>
+            <div class="small">{% for c in chosen.get("countries") or [{"country": chosen.country, "rank": chosen.rank}] %}{{ flag(c.country) }} #{{ c.rank }} {% endfor %}</div>
+            {% if chosen.get("source") == "web" %}
+            <p class="small">Add it in TikTok: open the draft, tap <b>Add sound</b>, search
+              <b>{{ chosen.title }}</b>. <a href="{{ chosen.search_url }}" target="_blank" rel="noopener">See it on TikTok ↗</a></p>
+            {% else %}
+            <form method="post" action="/jobs/{{ job.video_id }}/sound/settings" class="soundsettings">
+              <label class="small">Sound volume <output>{{ chosen.volume }}</output><input type="range" name="volume" min="0" max="100" value="{{ chosen.volume }}" oninput="this.previousElementSibling.value=this.value"></label>
+              <label class="small">Voice volume <output>{{ chosen.original_volume }}</output><input type="range" name="original_volume" min="0" max="100" value="{{ chosen.original_volume }}" oninput="this.previousElementSibling.value=this.value"></label>
+              <label class="small">Start the sound at (s)<input type="number" name="start_s" min="0" step="0.5" value="{{ chosen.start_s }}"></label>
+              <div class="row">
+                <button type="button" class="btn small" data-clip="{{ job.video_id }}" data-together="{{ chosen.id }}" data-start="{{ chosen.start_s }}" data-volume="{{ chosen.volume }}" data-voice="{{ chosen.original_volume }}">▶ Preview with clip</button>
+                <button class="btn small">Save</button>
+              </div>
+            </form>
+            {% endif %}
+            <form method="post" action="/jobs/{{ job.video_id }}/sound/clear"><button class="btn small danger">No TikTok sound</button></form>
+          </div>
+        {% endif %}
+
+        {% if sound.get("status") == "working" %}
+          <p class="small">🎧 Gemini is {{ "listening to" if via_upload_post else "looking up" }} this week's trending sounds… (about 30 s, refresh to see)</p>
+        {% elif sound.get("status") == "error" %}
+          <p class="small bad-text">Couldn't get suggestions: {{ sound.error }}</p>
+        {% endif %}
+
+        {% if sound.get("suggestions") %}
+          <h3>Gemini's picks{% if sound.get("listened_to") %} <span class="muted">(listened to {{ sound.listened_to }} sounds)</span>{% endif %}</h3>
+          {% for s in sound.suggestions %}
+            <div class="pick {{ 'is-chosen' if chosen and chosen.id == s.id }}">
+              <div class="row between"><b>{{ loop.index }}. {{ s.title }}</b><span class="muted small">fit {{ s.fit }}/10</span></div>
+              <div class="muted small">{{ s.artist }} · {% for c in s.countries %}{{ flag(c.country) }} #{{ c.rank }} {% endfor %}</div>
+              <div class="small">{{ s.reason }}</div>
+              <div class="row">
+                {% if s.get("source") == "web" %}
+                <a class="btn small" href="{{ s.search_url }}" target="_blank" rel="noopener">Find on TikTok ↗</a>
+                {% else %}
+                <button type="button" class="btn small" data-preview="{{ s.id }}" data-start="{{ s.start_s }}">▶ Listen</button>
+                {% endif %}
+                {% if not (chosen and chosen.id == s.id) %}
+                <form method="post" action="/jobs/{{ job.video_id }}/sound/choose"><input type="hidden" name="track_id" value="{{ s.id }}"><button class="btn small primary">Use this</button></form>
+                {% endif %}
+              </div>
+            </div>
+          {% endfor %}
+        {% endif %}
+
+        <div class="row">
+          <form method="post" action="/jobs/{{ job.video_id }}/sound/suggest"><button class="btn small">{{ "Ask Gemini again" if sound.get("suggestions") else "🎧 Suggest trending sounds" }}</button></form>
+        </div>
+
+        {% if charts %}
+        <details class="browse"><summary class="small">Pick something else from the charts</summary>
+          {% for country, chart in charts.items() %}
+            <h3>{{ flag(country) }} {{ country }} · top {{ (chart.tracks or [])|count }}{% if chart.error %} <span class="bad-text">(couldn't refresh)</span>{% endif %}</h3>
+            {% for t in chart.tracks or [] %}
+              <div class="row chartrow">
+                <span class="muted small rank">#{{ t.rank }}</span>
+                <span class="grow small"><b>{{ t.title }}</b> <span class="muted">{{ t.artist }}</span></span>
+                <button type="button" class="btn small" data-preview="{{ t.id }}" data-start="0">▶</button>
+                <form method="post" action="/jobs/{{ job.video_id }}/sound/choose"><input type="hidden" name="track_id" value="{{ t.id }}"><button class="btn small">Use</button></form>
+              </div>
+            {% endfor %}
+          {% endfor %}
+        </details>
+        {% endif %}
+        {% if web_chart and web_chart.get("tracks") %}
+        <details class="browse"><summary class="small">Pick something else that's trending this week</summary>
+          {% for t in web_chart.tracks %}
+            <div class="row chartrow">
+              <span class="muted small rank">{{ flag(t.country) }} #{{ t.rank }}</span>
+              <span class="grow small"><b>{{ t.title }}</b> <span class="muted">{{ t.artist }}</span><br><span class="muted">{{ t.why }}</span></span>
+              <a class="btn small" href="{{ t.search_url }}" target="_blank" rel="noopener">↗</a>
+              <form method="post" action="/jobs/{{ job.video_id }}/sound/choose"><input type="hidden" name="track_id" value="{{ t.id }}"><button class="btn small">Use</button></form>
+            </div>
+          {% endfor %}
+        </details>
+        {% endif %}
+        <audio id="soundplayer" preload="none"></audio>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    <section class="card">
+      <h2>Heavy edits in Shotcut</h2>
+      {% if not shotcut.installed %}
+        <p class="small">Shotcut is a free, open-source desktop editor (keyframes, transitions, effects, more tracks).
+          Install it once, then reload this page:</p>
+        <pre class="small">{{ shotcut.hint }}</pre>
+        <p class="small"><a href="https://shotcut.org/download/" target="_blank" rel="noopener">or download from shotcut.org ↗</a></p>
+      {% else %}
+        <p class="muted small">Opens this clip and its music in Shotcut. Edit, press <b>Ctrl+S</b>, then come back and click
+          <b>Use my Shotcut edit</b>. Text and filters from the editor above aren't carried over.</p>
+        <div class="row">
+          <form method="post" action="/jobs/{{ job.video_id }}/shotcut/open"><button class="btn">{{ "Reopen" if shotcut.project else "Open" }} in Shotcut</button></form>
+          {% if shotcut.project %}
+            <form method="post" action="/jobs/{{ job.video_id }}/shotcut/use"><button class="btn primary">Use my Shotcut edit</button></form>
+            <form method="post" action="/jobs/{{ job.video_id }}/shotcut/open" onsubmit="return confirm('Throw away your Shotcut changes and start again from this clip?')">
+              <input type="hidden" name="fresh" value="true"><button class="btn danger small">Start over</button></form>
+          {% endif %}
+        </div>
+      {% endif %}
+    </section>
+  {% endif %}
+
+  {% if clip %}
+    <section class="card">
+      <h2>Why Gemini picked it</h2>
+      <p class="small">{{ clip.get("reason", "") }}</p>
+      {% if clip.get("hook") %}<p class="muted small"><b>Hook:</b> {{ clip.hook }}</p>{% endif %}
+      {% if clip.get("spoken_words") %}<details><summary class="small">What's said</summary><p class="small">{{ clip.spoken_words }}</p></details>{% endif %}
+    </section>
+  {% endif %}
+  </div>
+</div>
+
+{% if job.captions %}
+<section class="card">
+  <h2>Captions &amp; platforms</h2>
+  <form method="post" action="/jobs/{{ job.video_id }}/approve" id="postform">
+    {% for p in platforms %}
+      <div class="cap">
+        {% set conn = (connections or {}).get(p) %}
+        <label class="row"><input type="checkbox" name="platform_{{ p }}" {% if p in (job.platforms or []) %}checked{% endif %}> <b>{{ {"tiktok":"TikTok","instagram":"Instagram Reels","x":"X"}[p] }}</b>
+          {% if p == "x" %}<span class="muted small counter" data-for="caption_x"></span>{% endif %}
+          {% if conn %}
+            {% if conn.connected %}<span class="small ok-text">✓ {{ conn.account or "connected" }}</span>
+            {% else %}<a class="small warn-text" href="/connections">not connected: set up ↗</a>{% endif %}
+            {% if p == "tiktok" and conn.mode == "inbox" %}<span class="muted small">· goes to your TikTok inbox: paste this caption there</span>{% endif %}
+          {% elif p == "tiktok" %}<span class="muted small">privacy: {{ cfg.upload_post.tiktok_privacy_level }}</span>{% endif %}
+          <button type="button" class="btn small" data-copy="caption_{{ p }}">Copy</button></label>
+        <textarea name="caption_{{ p }}" id="caption_{{ p }}" rows="{{ 3 if p == 'x' else 5 }}" {% if p == "x" %}maxlength="280"{% endif %}>{{ job.captions.get(p, "") }}</textarea>
+      </div>
+    {% endfor %}
+    <label class="row"><input type="checkbox" name="ai_label" {% if job.ai_label %}checked{% endif %}> Label as AI-generated</label>
+    {% if connections %}<p class="muted small">TikTok gets the label automatically when posted directly; for inbox drafts, switch on
+      <b>AI-generated content</b> in TikTok's post settings. Instagram's and X's posting APIs have no label switch: add it in their apps if needed.</p>{% endif %}
+    {% if job.state == "READY" %}
+    <div class="row actions">
+      <button class="btn primary" onclick="return confirm('Post this clip now?')">Approve &amp; Post</button>
+      <button class="btn" formaction="/jobs/{{ job.video_id }}/save">Save without posting</button>
+      <span class="grow"></span>
+      <button class="btn danger" formaction="/jobs/{{ job.video_id }}/reject" formnovalidate onclick="return confirm('Discard this clip?')">Discard</button>
+    </div>
+    {% endif %}
+  </form>
+
+  {% if job.state in ("READY", "FAILED", "POSTED") and files["final.mp4"] %}
+  <details class="manual"><summary class="small"><b>Post it yourself instead</b></summary>
+    <p class="small">Download the video, upload it in the app or website, paste the caption (Copy buttons above), then tell
+      Clipper so it never posts it again.</p>
+    <div class="row">
+      <a class="btn small" href="/media/{{ job.video_id }}/final.mp4" download="{{ job.video_id }}.mp4">⬇ Download video</a>
+      <a class="btn small" href="https://www.tiktok.com/tiktokstudio/upload" target="_blank" rel="noopener">TikTok upload ↗</a>
+      <a class="btn small" href="https://www.instagram.com/" target="_blank" rel="noopener">Instagram ↗</a>
+      <a class="btn small" href="https://x.com/compose/post" target="_blank" rel="noopener">X ↗</a>
+    </div>
+    <div class="row">
+      {% for p in (job.platforms or []) %}
+        {% if not ((pr.platforms or {}).get(p) or {}).get("ok") %}
+        <form method="post" action="/jobs/{{ job.video_id }}/mark_posted"><input type="hidden" name="platform" value="{{ p }}">
+          <button class="btn small">I posted it on {{ {"tiktok":"TikTok","instagram":"Instagram","x":"X"}[p] }}</button></form>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </details>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if job.state in ("SKIPPED", "REJECTED") %}
+  <form method="post" action="/jobs/{{ job.video_id }}/process"><button class="btn primary">Bring this clip back</button></form>
+{% endif %}
+{% endblock %}

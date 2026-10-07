@@ -1,0 +1,13 @@
+yt-dlp[default,curl-cffi]
+google-genai>=2.22
+google-auth
+pydantic>=2
+fastapi
+uvicorn
+jinja2
+python-multipart
+requests
+python-dotenv
+pyyaml
+win11toast
+pytest

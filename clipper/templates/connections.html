@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}Connections{% endblock %}
+{% block body %}
+<h1>Connections</h1>
+<p class="muted small">Clipper posts to your accounts itself, through each platform's official API. You set each one up
+  once. Keys are saved in <code>.env</code> and logins in <code>data/</code> on this PC only: never share those files.</p>
+
+{% if msg %}<div class="banner ok-banner">{{ msg }}</div>{% endif %}
+{% if error %}<div class="banner bad">{{ error }}</div>{% endif %}
+{% if service == "upload_post" %}
+  <div class="banner warn">Posting is set to go through Upload-Post (<code>posting: service</code> in config.yaml).
+    Change it to <code>"direct"</code> to use these connections.</div>
+{% endif %}
+
+{% macro badge(s) %}
+  {% if s.connected %}<span class="state s-posted">connected{% if s.account %} · {{ s.account }}{% endif %}</span>
+  {% elif s.missing %}<span class="state s-skipped">keys needed</span>
+  {% else %}<span class="state s-failed">not connected</span>{% endif %}
+{% endmacro %}
+
+{% macro keyfield(name, label) %}
+  <label class="small keyfield">{{ label }} {% if saved[name] %}<span class="ok-text">✓ saved</span>{% endif %}
+    <input type="password" name="{{ name }}" autocomplete="off" placeholder="{{ 'paste to replace' if saved[name] else 'paste here' }}"></label>
+{% endmacro %}
+
+<section class="card conn">
+  <div class="row between"><h2>Google Flow robot (albino edits)</h2>
+    {% if flow.needs_you %}<span class="state s-failed">needs you</span>
+    {% elif flow.paused_until %}<span class="state s-failed">paused</span>
+    {% elif flow.signed_in %}<span class="state s-posted">ready{% if flow.account %} · {{ flow.account }}{% endif %}</span>
+    {% else %}<span class="state s-skipped">sign-in needed</span>{% endif %}</div>
+  <p class="small">{% if flow.backend == "flow" %}Albino edits run here: Clipper drives <b>flow.google.com</b> in its own Chrome
+    window the way you do it (upload → right-click → <b>Add to prompt</b> → <b>Agent</b> → prompt → generate), one piece at a time.
+    {% else %}Not in use: albino edits run on Vertex (<code>transform: backend: "vertex"</code>). Set it to <code>"flow"</code> to use this.{% endif %}</p>
+  <ul class="small">
+    <li>Window: {{ "open" if flow.window_open else "closed (it opens by itself when an edit starts)" }}</li>
+    <li>Credits: {{ flow.credits if flow.credits is not none else "not seen yet" }} · edits today: {{ flow.edits_today }} / {{ flow.daily_max }}</li>
+    {% if flow.project_url %}<li>Project: <a href="{{ flow.project_url }}" target="_blank" rel="noopener">{{ flow.project_url[-36:] }} ↗</a></li>{% endif %}
+    {% if flow.needs_you %}<li class="bad-text">Needs you: {{ flow.needs_you }}</li>{% endif %}
+    {% if flow.paused_until %}<li class="bad-text">Paused until {{ flow.paused_until|int|clock }}: {{ flow.pause_reason }}</li>{% endif %}
+    {% if flow.last_error and not flow.paused_until %}<li class="warn-text">Last problem: {{ flow.last_error }}</li>{% endif %}
+  </ul>
+  <p class="small muted">Flow has no API and Google's terms restrict automated use, so the robot goes slowly (a pause between
+    edits, {{ flow.daily_max }} edits a day at most) and stops on anything unusual: signed out, a rights notice, "unusual activity"
+    or low credits. Don't click in its window while it's editing.</p>
+  <div class="row">
+    <form method="post" action="/connections/flow/open"><button class="btn {{ 'primary' if not flow.signed_in }}">Open robot window</button></form>
+    <form method="post" action="/connections/flow/check"><button class="btn">Check</button></form>
+    {% if flow.paused_until or flow.needs_you %}<form method="post" action="/connections/flow/clear"><button class="btn small danger">{{ "I fixed it, carry on" if flow.needs_you else "Clear pause" }}</button></form>{% endif %}
+  </div>
+</section>
+
+<section class="card conn">
+  <div class="row between"><h2>Google Gemini (finding highlights)</h2>
+    {% if gemini|selectattr("ready")|list %}<span class="state s-posted">ready</span>{% else %}<span class="state s-skipped">key needed</span>{% endif %}</div>
+  <p class="small">Clipper tries these in order and moves to the next when one has no credit or quota left:</p>
+  <ul class="small">
+  {% for g in gemini %}
+    <li><b>{{ "Vertex AI (your Cloud project)" if g.name == "vertex" else "Free Gemini API key" }}</b>:
+      {% if not g.ready %}not set up{% elif g.skipped_until %}<span class="bad-text">resting after: {{ g.reason[:160] }}</span>{% else %}<span class="ok-text">ready</span>{% endif %}</li>
+  {% endfor %}
+  </ul>
+  <details{% if not saved.GEMINI_API_KEY %} open{% endif %}><summary class="small"><b>Get a free key (2 minutes)</b></summary>
+    <ol class="small steps">
+      <li>Go to <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey ↗</a> and click <b>Create API key</b>.</li>
+      <li>Pick a project with <b>no billing</b> linked (or let it make a new one). A project whose prepaid credit ran out stays blocked; it doesn't drop back to free.</li>
+      <li>Paste the key below. On the free tier Google may use the clips you send to improve its products, and web search for trending sounds isn't included.</li>
+    </ol></details>
+  <form method="post" action="/connections/keys" class="keys">
+    {{ keyfield("GEMINI_API_KEY", "Gemini API key") }}<button class="btn small">Save key</button></form>
+</section>
+
+<section class="card conn">
+  <div class="row between"><h2>TikTok</h2>{{ badge(status.tiktok) }}</div>
+  <p class="small">Mode: <b>{{ "sent to your TikTok inbox as a draft" if status.tiktok.mode == "inbox" else "posted automatically" }}</b>
+    {% if status.tiktok.mode == "inbox" %}— you get a notification in TikTok, add a trending sound and your caption, and post.
+    {% else %}— private-only until TikTok audits your app.{% endif %} (<code>posting: tiktok_mode</code>)</p>
+  <details{% if not status.tiktok.connected %} open{% endif %}><summary class="small"><b>Set up (free, about 15 minutes)</b></summary>
+    <ol class="small steps">
+      <li>Go to <a href="https://developers.tiktok.com/" target="_blank" rel="noopener">developers.tiktok.com ↗</a>, log in, then <b>Manage apps → Connect an app</b>.</li>
+      <li>Add the products <b>Login Kit</b> (platform: <b>Desktop</b>) and <b>Content Posting API</b>.</li>
+      <li>In Login Kit, add this <b>Redirect URI</b> exactly: <code>{{ status.tiktok.redirect_uri }}</code></li>
+      <li>Turn on the scopes <b>user.info.basic</b> and <b>video.upload</b>{% if status.tiktok.mode != "inbox" %}, and <b>video.publish</b> (switch on <b>Direct Post</b> first){% endif %}.</li>
+      <li>If the app is in <b>Sandbox</b>, add your own TikTok account under <b>Target users</b>.</li>
+      <li>Copy the <b>Client key</b> and <b>Client secret</b> below, save, then click <b>Connect TikTok</b>.</li>
+    </ol></details>
+  <form method="post" action="/connections/keys" class="keys">
+    {{ keyfield("TIKTOK_CLIENT_KEY", "Client key") }}{{ keyfield("TIKTOK_CLIENT_SECRET", "Client secret") }}
+    <button class="btn small">Save keys</button></form>
+  <div class="row">
+    <a class="btn {{ 'primary' if not status.tiktok.connected }}" href="/connect/tiktok">{{ "Reconnect" if status.tiktok.connected else "Connect TikTok" }}</a>
+    {% if status.tiktok.connected %}<form method="post" action="/connections/tiktok/disconnect"><button class="btn small danger">Disconnect</button></form>{% endif %}
+  </div>
+</section>
+
+<section class="card conn">
+  <div class="row between"><h2>Instagram Reels</h2>{{ badge(status.instagram) }}</div>
+  <p class="small">Posted automatically. Your Instagram must be a <b>Professional</b> account linked to a <b>Facebook Page</b>.</p>
+  <details{% if not status.instagram.connected %} open{% endif %}><summary class="small"><b>Set up (free, about 20 minutes)</b></summary>
+    <ol class="small steps">
+      <li>In the Instagram app: <b>Settings → Account type and tools → Switch to professional account</b> (Creator or Business).</li>
+      <li>Link it to a Facebook Page you manage (Facebook Page settings → <b>Linked accounts → Instagram</b>). Make a Page if you have none.</li>
+      <li>Go to <a href="https://developers.facebook.com/apps/" target="_blank" rel="noopener">developers.facebook.com/apps ↗</a> → <b>Create app</b> → type <b>Business</b>.</li>
+      <li>Add the products <b>Facebook Login for Business</b> and <b>Instagram</b> (API setup with Facebook login).</li>
+      <li>In Facebook Login → Settings, add this <b>Valid OAuth Redirect URI</b>: <code>{{ status.instagram.redirect_uri }}</code>
+        (localhost works while the app stays in <b>Development</b> mode, which is all you need for your own account).</li>
+      <li>Copy the <b>App ID</b> and <b>App secret</b> (App settings → Basic) below, save, then click <b>Connect Instagram</b> and allow everything it asks.</li>
+    </ol></details>
+  <form method="post" action="/connections/keys" class="keys">
+    {{ keyfield("META_APP_ID", "App ID") }}{{ keyfield("META_APP_SECRET", "App secret") }}
+    <button class="btn small">Save keys</button></form>
+  <div class="row">
+    <a class="btn {{ 'primary' if not status.instagram.connected }}" href="/connect/instagram">{{ "Reconnect" if status.instagram.connected else "Connect Instagram" }}</a>
+    {% if status.instagram.connected %}<form method="post" action="/connections/instagram/disconnect"><button class="btn small danger">Disconnect</button></form>{% endif %}
+  </div>
+</section>
+
+<section class="card conn">
+  <div class="row between"><h2>X</h2>{{ badge(status.x) }}</div>
+  <p class="small">Posted automatically. X charges about <b>$0.015 per post</b> ($0.20 if the caption has a link) from prepaid credit.</p>
+  <details{% if not status.x.connected %} open{% endif %}><summary class="small"><b>Set up (about 10 minutes)</b></summary>
+    <ol class="small steps">
+      <li>Go to <a href="https://developer.x.com/" target="_blank" rel="noopener">developer.x.com ↗</a>, sign in with the X account you post from, and create an app (pay-per-use).</li>
+      <li>Add a few dollars of credit.</li>
+      <li>In the app's <b>User authentication settings</b>, set <b>App permissions</b> to <b>Read and write</b>.</li>
+      <li>Under <b>Keys and tokens</b>, copy the <b>API Key</b> and <b>Secret</b>, then generate and copy the <b>Access Token</b> and <b>Secret</b>
+        (generate them <i>after</i> setting Read and write).</li>
+      <li>Paste all four below, save, then click <b>Check X keys</b>.</li>
+    </ol></details>
+  <form method="post" action="/connections/keys" class="keys">
+    {{ keyfield("X_API_KEY", "API key") }}{{ keyfield("X_API_SECRET", "API key secret") }}
+    {{ keyfield("X_ACCESS_TOKEN", "Access token") }}{{ keyfield("X_ACCESS_TOKEN_SECRET", "Access token secret") }}
+    <button class="btn small">Save keys</button></form>
+  <div class="row">
+    <form method="post" action="/connect/x/verify"><button class="btn {{ 'primary' if not status.x.connected }}">Check X keys</button></form>
+    {% if status.x.connected %}<form method="post" action="/connections/x/disconnect"><button class="btn small danger">Disconnect</button></form>{% endif %}
+  </div>
+</section>
+{% endblock %}

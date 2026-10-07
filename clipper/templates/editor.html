@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Edit · {{ (job.info or {}).get("title") or job.video_id }}{% endblock %}
+{% block header %}
+  <span class="muted small" id="dirty"></span>
+  <a class="btn" href="/jobs/{{ job.video_id }}">Cancel</a>
+  {% if editor_data.editable %}<button class="btn primary" id="save">Save &amp; render</button>{% endif %}
+{% endblock %}
+{% block body %}
+{% if not editor_data.editable %}
+  <div class="banner warn">This clip is {{ job.state }}, so it can't be edited right now. You can look, but not save.</div>
+{% endif %}
+
+<div class="editor">
+  <!-- preview -->
+  <section class="card stagecard">
+    <div class="stage" id="stage">
+      <video id="vid" src="{{ editor_data.base_url }}" playsinline preload="auto"></video>
+      <div class="texts" id="textlayer"></div>
+      <div class="fadeshade" id="shade"></div>
+    </div>
+    <audio id="music" preload="auto"></audio>
+    <div class="row transport">
+      <button class="btn" id="play">▶</button>
+      <span class="mono" id="clock">0:00.0 / 0:00.0</span>
+      <span class="grow"></span>
+      <span class="muted small">Preview is approximate; the render is exact.</span>
+    </div>
+  </section>
+
+  <!-- properties -->
+  <section class="card props">
+    <div class="tabs" id="paneltabs">
+      <a href="#" class="tab active" data-panel="look">Look</a>
+      <a href="#" class="tab" data-panel="music">Music</a>
+      <a href="#" class="tab" data-panel="text">Text</a>
+    </div>
+
+    <div class="panel" data-panel="look">
+      <h3>Filter</h3>
+      <div class="swatches" id="filters"></div>
+      <h3>Camera</h3>
+      <select id="zoom"></select>
+      <div class="two">
+        <label>Fade in <output data-for="fade_in"></output>s<input type="range" id="fade_in" min="0" max="3" step="0.1"></label>
+        <label>Fade out <output data-for="fade_out"></output>s<input type="range" id="fade_out" min="0" max="3" step="0.1"></label>
+      </div>
+      <label>Voice volume <output data-for="voice_volume"></output><input type="range" id="voice_volume" min="0" max="2" step="0.05"></label>
+      <h3>Trim</h3>
+      <p class="muted small">Drag the ends of the video bar on the timeline, or:</p>
+      <div class="two">
+        <button class="btn" id="setin">Start here</button>
+        <button class="btn" id="setout">End here</button>
+      </div>
+    </div>
+
+    <div class="panel" data-panel="music" hidden>
+      <div class="row">
+        <select id="track" class="grow"></select>
+        <button class="btn" id="trackpreview" title="Hear the track on its own">♪</button>
+      </div>
+      <p class="muted small" id="moodhint"></p>
+      <label>Volume <output data-for="music_volume"></output><input type="range" id="music_volume" min="0" max="1" step="0.01"></label>
+      <label>Start the song at <output data-for="music_offset"></output>s<input type="range" id="music_offset" min="0" max="180" step="0.5"></label>
+      <div class="two">
+        <label>Fade in <output data-for="music_fade_in"></output>s<input type="range" id="music_fade_in" min="0" max="5" step="0.1"></label>
+        <label>Fade out <output data-for="music_fade_out"></output>s<input type="range" id="music_fade_out" min="0" max="5" step="0.1"></label>
+      </div>
+      <label class="row"><input type="checkbox" id="ducking"> Lower the music while someone talks</label>
+      {% if not editor_data.tracks %}<p class="banner info small">No music yet: drop tracks into the <code>music</code> folder and reload.</p>{% endif %}
+    </div>
+
+    <div class="panel" data-panel="text" hidden>
+      <div class="row">
+        <button class="btn primary" id="addtext">+ Add text</button>
+        <button class="btn" id="addtitle" title="Add the clip's title as an opening hook">+ Hook from title</button>
+      </div>
+      <div class="capbar">
+        <button class="btn" id="autocaps" title="Listen to the clip and add word-timed captions (on this PC)">✨ Auto captions</button>
+        <span class="muted small" id="capstatus">Word-by-word captions, timed to his voice. Check the words: accents can confuse it.</span>
+      </div>
+      <div id="textlist" class="textlist"></div>
+      <div id="texteditor" hidden>
+        <textarea id="t_text" rows="2" placeholder="Type your text"></textarea>
+        <div class="two">
+          <label>Style<select id="t_style"></select></label>
+          <label>Position<select id="t_position"></select></label>
+          <label>Animation<select id="t_animation"></select></label>
+          <label>Colour<input type="color" id="t_color"></label>
+          <label>Highlight colour<input type="color" id="t_accent"></label>
+        </div>
+        <label class="row small" id="t_allwrap" hidden><input type="checkbox" id="t_all" checked>
+          Style changes apply to all auto captions</label>
+        <label>Size <output data-for="t_size"></output><input type="range" id="t_size" min="24" max="160" step="2"></label>
+        <div class="two">
+          <label>From <output data-for="t_start"></output>s<input type="range" id="t_start" min="0" step="0.1"></label>
+          <label>To <output data-for="t_end"></output>s<input type="range" id="t_end" min="0" step="0.1"></label>
+        </div>
+        <div class="row">
+          <button class="btn" id="t_here">Start at playhead</button>
+          <span class="grow"></span>
+          <button class="btn danger" id="t_delete">Delete</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- timeline (full width under both on wide screens; right under the preview on narrow ones) -->
+  <section class="card timeline" id="timeline">
+    <div class="ruler" id="ruler"></div>
+    <div class="track"><span class="tracklabel">Video</span><div class="lane" id="lane_video"><div class="vbar" id="vbar">
+      <span class="handle left" data-handle="in"></span><span class="vlabel" id="vlabel"></span><span class="handle right" data-handle="out"></span></div></div></div>
+    <div class="track"><span class="tracklabel">Text</span><div class="lane" id="lane_text"></div></div>
+    <div class="track"><span class="tracklabel">Music</span><div class="lane" id="lane_music"></div></div>
+    <div class="playhead" id="playhead"></div>
+  </section>
+</div>
+
+<script id="editor-data" type="application/json">{{ editor_data | tojson }}</script>
+<script src="{{ asset('editor.js') }}"></script>
+{% endblock %}

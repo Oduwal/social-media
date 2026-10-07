@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% set refresh = 15 if busy else 60 %}
+{% block header %}
+  <span class="muted">watching {% if cfg.creator.handle %}<b>@{{ cfg.creator.handle }}</b>{% else %}<i>nobody yet</i>{% endif %}</span>
+{% endblock %}
+{% block body %}
+
+{% if not cfg.creator.handle %}
+  <div class="banner warn">Set <code>creator.handle</code> in <code>config.yaml</code> to start watching a profile (picked up within a minute). You can still paste links below.</div>
+{% endif %}
+{% if not has_key %}
+  <div class="banner warn">No <code>UPLOAD_POST_API_KEY</code> in <code>.env</code>: clips can be prepared, but posting will fail.</div>
+{% endif %}
+{% if not tracks %}
+  <div class="banner info">No music yet: drop royalty-free tracks into the <code>music</code> folder.</div>
+{% endif %}
+
+<div class="stats">
+  <a class="stat card" href="/library?tab=preview"><b>{{ totals.get("PREVIEW", 0) }}</b><span>to review</span></a>
+  <a class="stat card" href="/library?tab=working"><b>{{ totals.get("CUT", 0) + totals.get("TRANSFORMED", 0) + totals.get("NEW", 0) }}</b><span>in progress</span></a>
+  <a class="stat card" href="/library?tab=ready"><b>{{ totals.get("READY", 0) }}</b><span>ready to post</span></a>
+  <a class="stat card" href="/library?tab=posted"><b>{{ totals.get("POSTED", 0) }}</b><span>posted</span></a>
+</div>
+
+<section class="card monitor {{ 'ok' if monitor.ok else ('bad' if monitor.message else '') }}">
+  <div>
+    <b>Monitor:</b> {{ monitor.message or "starting…" }}
+    <div class="muted small">
+      last success {{ monitor.last_ok | ago }} · next poll {{ monitor.next_poll | ago }}
+      · {{ "secUid saved" if sec_uid else "secUid not learned yet" }}
+    </div>
+  </div>
+  <form method="post" action="/monitor/poll"><button class="btn">Check now</button></form>
+</section>
+
+<section class="card">
+  <form method="post" action="/jobs" class="row">
+    <input name="url" type="url" required placeholder="Paste a TikTok link to find its highlights…" class="grow">
+    <button class="btn primary">Find highlights</button>
+  </form>
+</section>
+
+<section class="card">
+  <div class="row between">
+    <h2>Videos</h2>
+    <a class="small" href="/?show_skipped={{ 'false' if show_skipped else 'true' }}">
+      {{ "hide" if show_skipped else "show" }} skipped backlog</a>
+  </div>
+  {% if not videos %}<p class="muted">Nothing yet. New posts from the creator show up here automatically.</p>{% endif %}
+  <table class="jobs">
+    {% for v in videos %}
+    {% set c = v.counts %}
+    <tr>
+      <td><a href="/jobs/{{ v.video_id }}">{{ (v.info or {}).get("title", "")[:70] or v.video_id }}</a>
+        <div class="muted small">{{ v.source }} · {{ v.created_at | ago }}</div></td>
+      <td><span class="state s-{{ v.state|lower }}">{{ v.state }}</span>
+        {% if v.hold and v.state in ("DETECTED","DOWNLOADED","HIGHLIGHTED") %} <span class="state s-skipped">held</span>{% endif %}
+        {% if v.state == "FAILED" %}<div class="small bad-text">at {{ v.failed_step }}</div>{% endif %}</td>
+      <td class="small">{% if c %}{{ c.values()|sum }} clips{% if c.get("PREVIEW") %} · <b>{{ c.PREVIEW }} to review</b>{% endif %}{% if c.get("READY") %} · <b>{{ c.READY }} ready</b>{% endif %}{% endif %}</td>
+      <td class="right">
+        {% if c.get("PREVIEW") %}<a class="btn primary" href="/library?tab=preview&video={{ v.video_id }}">Review</a>
+        {% elif v.state == "FAILED" %}<form method="post" action="/jobs/{{ v.video_id }}/retry"><button class="btn">Retry</button></form>
+        {% elif v.state == "SKIPPED" %}<form method="post" action="/jobs/{{ v.video_id }}/process"><button class="btn">Process</button></form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endblock %}

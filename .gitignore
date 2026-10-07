@@ -1,0 +1,10 @@
+.env
+*cookies*.txt
+data/
+__pycache__/
+.pytest_cache/
+# test projects and third-party skills (reinstall with: npx skills experimental_install)
+studio/
+.claude/skills/
+.claude/settings.local.json
+*.log

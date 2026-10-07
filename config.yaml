@@ -1,0 +1,109 @@
+# Clipper settings. Restart `python -m clipper` after editing.
+
+creator:
+  handle: "official_gehgeh_"                  # TikTok handle WITHOUT the @, e.g. "khaby.lame"
+  credit: "@official_gehgeh_"                  # added to every caption, e.g. "🎥 @khaby.lame" (defaults to "🎥 @<handle>")
+  hashtags: ["#GehGeh", "#fyp"]            # always added; keep the quotes, # starts a comment otherwise
+
+monitor:
+  enabled: true
+  interval_minutes: 20        # don't go below 5 from a home connection
+  jitter: 0.25                # +/- 25% randomness on every interval
+  playlist_end: 10            # how many of the newest posts to look at per poll
+  auto_update_ytdlp: true     # TikTok breaks yt-dlp every few weeks; update daily
+
+downloader:
+  # A TikTok login lets yt-dlp download posts TikTok hides from logged-out viewers
+  # ("This post may not be comfortable for some audiences"). Without one, those fall
+  # back to TikWM, an unofficial service. See "TikTok login (cookies)" in README.md.
+  cookies_file: ""            # e.g. "tiktok_cookies.txt" (exported from your browser, in this folder)
+  cookies_from_browser: ""    # or "firefox" (Chrome/Edge usually fail on Windows while open)
+
+trending:
+  # Gemini suggests trending TikTok sounds for each finished clip; the one you choose is
+  # attached to the TikTok post (licensed, and the clip shows up on the sound's page).
+  enabled: true
+  countries: ["US", "NG"]     # charts to pick from (2-letter country codes)
+  date_range: "7DAY"          # 1DAY, 7DAY, 30DAY or 90DAY
+  candidates_per_country: 10  # how many top sounds per chart Gemini listens to (~$0.02 per clip)
+  sound_volume: 35            # 0-100, the trending sound under the voice on TikTok
+  original_volume: 100        # 0-100, the clip's own audio on TikTok
+
+clip:
+  min_seconds: 15
+  max_seconds: 45
+
+gemini:
+  project_id: "project-8b3114be-add7-457c-84b"
+  location: "global"          # 3.x models are NOT served from us-central1
+  model: "gemini-3.5-flash"   # do not use gemini-2.5-*: retired 2026-10-20
+  service_account_key: 'C:\Users\ODUWA\Pictures\project-8b3114be-add7-457c-84b-d3079480ce6e.json'
+
+transform:
+  enabled: true
+  # Where the albino edit runs: "vertex" (Gemini API, paid from Cloud billing) or "flow" (the
+  # Google Flow robot: drives flow.google.com in its own Chrome window on your AI Pro plan;
+  # set it up on the Connections page). With "flow", model/resolution/reference below don't apply.
+  backend: "flow"
+  script_path: 'C:\Users\ODUWA\Pictures\transform_video.py'
+  variant: "albinism"         # one of the keys in EDIT_INSTRUCTION_VARIANTS in that script
+  # Omni models, first one your Google project has wins (checked for free). "" = the script's own.
+  model: ["gemini-omni-1.1-flash", "gemini-omni-1.1-flash-preview"]
+  # Your own instruction, used instead of the script's wording ("" = use the script's variant).
+  # This is the prompt Google Flow's agent wrote; in a side-by-side test it removed the skin
+  # patches our wording left (it can add a light white beard: redo that piece if so).
+  instruction: >-
+    Apply a albino pigmentation change only to the person. Change skin to be evenly albino pinkish-white
+    everywhere, with no freckles, spots, blotches, moles or tan. Change hair color to white. Change
+    irises to pale blue or pale pink. CRITICAL: Keep the exact same haircut, face, features, body,
+    clothing, background, lighting, motion, pacing, camera, and audio. Do not add hair, stubble,
+    wrinkles, or grey hair. The look must be identical in every frame. Do not edit the speech.
+  strict_look: false          # (the instruction above already includes the strict look)
+  colour_match: true          # even out brightness/tint between the pieces afterwards (free)
+  resolution: "1080p"         # Omni output: "360p", "720p", "1080p" or "4k" ("" = Omni's default, 720p)
+  # Reference look (one albino still you approve, sent with every piece). Off: Google refuses a
+  # picture of a person sent with a video of them talking ("speech edits"), tested 2026-10-03.
+  reference: false
+
+music:
+  default_volume: 0.18        # 0.0 - 1.0, relative to the creator's voice
+  ducking: true               # music dips while the creator is talking
+
+posting:
+  service: "direct"           # "direct" = Clipper posts itself (Connections page); "upload_post" = via Upload-Post
+  tiktok_mode: "inbox"        # "inbox" = sent to your TikTok inbox as a draft (you add a sound and post in the app)
+                              # "direct" = posted automatically (private-only until TikTok audits your app)
+  graph_api_version: "v24.0"  # Meta Graph API version for Instagram
+
+upload_post:
+  profile: "myclips"          # the profile name you created on app.upload-post.com
+  platforms: ["tiktok", "instagram", "x"]
+  # Start private for the first test post, then switch to PUBLIC_TO_EVERYONE.
+  # Options: PUBLIC_TO_EVERYONE, MUTUAL_FOLLOW_FRIENDS, FOLLOWER_OF_CREATOR, SELF_ONLY
+  tiktok_privacy_level: "SELF_ONLY"
+  ai_label: true              # label posts as AI-generated (Omni changes how the person looks)
+
+dashboard:
+  host: "127.0.0.1"
+  port: 8000
+  open_browser: true
+
+shotcut:
+  path: ""                    # folder with shotcut.exe + melt.exe; empty = look in the usual install places
+
+# The Google Flow robot (transform: backend: "flow"). Slow on purpose: Flow has no API and
+# Google's terms restrict automated use, so it paces itself and stops on anything unusual.
+flow:
+  daily_max_edits: 15         # each edit of a 10 s piece costs about 20 Flow credits (measured; Google lists 40)
+  min_gap_s: 60               # random pause between edits, in seconds
+  max_gap_s: 180
+  cooldown_minutes: 60        # pause after Flow reports unusual activity or limits
+  timeout_minutes: 12         # give up on one edit after this long
+
+# The video editor behind "Edit video": "clipper" = Clipper's timeline editor (tracks, keyframes,
+# transitions, captions, catalog; renders in a minute or two), "simple" = the older one-screen
+# editor, "studio" = HyperFrames Studio (renders take several minutes). All three are one click
+# away on a clip's page.
+editor: "clipper"
+studio:
+  port: 3020                  # where Studio runs while you edit a clip
