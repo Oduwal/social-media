@@ -31,7 +31,7 @@
     {% else %}<span class="state s-skipped">sign-in needed</span>{% endif %}</div>
   <p class="small">{% if flow.backend == "flow" %}Albino edits run here: Clipper drives <b>flow.google.com</b> in its own Chrome
     window the way you do it (upload → right-click → <b>Add to prompt</b> → <b>Agent</b> → prompt → generate), one piece at a time.
-    {% else %}Not in use: albino edits run on Vertex (<code>transform: backend: "vertex"</code>). Set it to <code>"flow"</code> to use this.{% endif %}</p>
+    {% else %}Not in use: albino edits run on {{ flow.backend|title }} (<code>transform: backend: "{{ flow.backend }}"</code>). Set it to <code>"flow"</code> to use this.{% endif %}</p>
   <ul class="small">
     <li>Window: {{ "open" if flow.window_open else "closed (it opens by itself when an edit starts)" }}</li>
     <li>Credits: {{ flow.credits if flow.credits is not none else "not seen yet" }} · edits today: {{ flow.edits_today }} / {{ flow.daily_max }}</li>

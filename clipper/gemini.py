@@ -114,6 +114,15 @@ class Client:
         self.cfg = cfg
         self.models = _Models(self)
         self.used = None  # the backend that answered last
+        # One genai.Client per route, kept alive while this Client lives: google-genai closes
+        # its HTTP connection when a genai.Client is garbage-collected, so taking `.models`
+        # from a throwaway one fails with "the client has been closed".
+        self._raw = {}
+
+    def _client(self, name: str):
+        if name not in self._raw:
+            self._raw[name] = _raw_client(name, self.cfg)
+        return self._raw[name]
 
     def _call(self, method: str, args, kwargs):
         names = available(self.cfg)
@@ -126,7 +135,7 @@ class Client:
         errors = []
         for name in live or names:
             try:
-                result = getattr(_raw_client(name, self.cfg).models, method)(*args, **kwargs)
+                result = getattr(self._client(name).models, method)(*args, **kwargs)
             except Exception as err:  # noqa: BLE001
                 if not account_problem(err):
                     raise

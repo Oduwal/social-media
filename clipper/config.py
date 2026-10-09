@@ -27,6 +27,7 @@ DEFAULTS = {
                   "resolution": "", "backend": "vertex"},
     # The Google Flow robot (transform: backend: "flow"); see flow_robot.py
     "flow": {"chrome_path": "", "debug_port": 9333, "project_url": "", "min_gap_s": 60, "max_gap_s": 180,
+             "clip_gap_s": 20, "piece_gap_s": 3,
              "daily_max_edits": 15, "cooldown_minutes": 60, "timeout_minutes": 12, "upload_timeout_minutes": 6},
     "music": {"default_volume": 0.18, "ducking": True},
     "upload_post": {"profile": "", "platforms": ["tiktok", "instagram", "x"],

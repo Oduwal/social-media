@@ -84,7 +84,8 @@ def run_step(job: dict, step: str, cfg: dict) -> None:
         if job.get("transform_mode") == "original":  # user chose "use as is"
             cfg = {**cfg, "transform": {**cfg["transform"], "enabled": False}}
         reference = None
-        if cfg["transform"]["enabled"] and cfg["transform"].get("reference")                 and not transform_adapter.uses_flow(cfg):  # the Flow robot has no reference-look step
+        if cfg["transform"]["enabled"] and cfg["transform"].get("reference") \
+                and transform_adapter.backend(cfg) == "vertex":  # the Flow robot has no reference-look step
             look = (job.get("info") or {}).get("look") or {}
             target = job.get("target") or ""
             if look.get("status") not in ("approved", "skipped") or look.get("target", "") != target:

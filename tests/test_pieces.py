@@ -64,7 +64,7 @@ def client(fresh_db, tmp_path, monkeypatch):
 
 @needs_ffmpeg
 def test_redo_one_piece_deletes_only_its_cached_edit(client, fresh_db, monkeypatch):
-    monkeypatch.setattr(transform_adapter, "uses_flow", lambda cfg: False)  # made and redone on Vertex
+    monkeypatch.setattr(transform_adapter, "backend", lambda cfg: "vertex")  # made and redone on Vertex
     db.insert_if_new(VID, "u", state="CLIPPED")
     db.insert_clip(CID, db.get(VID), {"start_s": 0, "end_s": 20})
     job_dir = config.job_dir(CID)
@@ -99,7 +99,7 @@ def test_redo_one_piece_refuses_after_switching_backend(client, fresh_db, monkey
     db.update(CID, state="READY", transform_info={"enabled": True, "backend": "vertex", "pieces": [
         {"index": 1, "kind": "albino", "file": "transform_work/edited/edited_001_albinism-x.mp4",
          "cache": "transform_work/edited/edited_001_albinism-x.mp4"}]})
-    monkeypatch.setattr(transform_adapter, "uses_flow", lambda cfg: True)
+    monkeypatch.setattr(transform_adapter, "backend", lambda cfg: "flow")
     resp = client.post(f"/jobs/{CID}/redo_piece", data={"index": "1"})
     assert resp.status_code == 409 and "every piece" in resp.text
     assert (edited / "edited_001_albinism-x.mp4").exists() and db.get(CID)["state"] == "READY"

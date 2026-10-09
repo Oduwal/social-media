@@ -9,6 +9,8 @@ from clipper import flow_robot, media, transform_adapter
 from tests.conftest import make_clip, needs_ffmpeg
 from tests.test_transform_adapter import STUB
 
+REAL_EDIT_MANY = flow_robot.edit_many
+
 
 @pytest.fixture
 def state(tmp_path, monkeypatch):
@@ -27,6 +29,17 @@ def test_page_messages_are_sorted_into_what_to_do():
     assert flow_robot.classify("This prompt violates our policies") is flow_robot.Refused
     assert flow_robot.classify("You don't have enough credits") is flow_robot.NeedsYou
     assert flow_robot.classify("45%\nApplying albino pigmentation") is None
+
+
+def test_agents_long_narration_does_not_trigger_a_pause():
+    # the Flow Agent narrates its plan in one long line; a trouble word buried in it is not a banner
+    narration = ("I'm going to edit the attached image to give the person an albino appearance. "
+                 "I will not change the daily limit of detail or the rate limit of motion, and I'll keep "
+                 "everything else exactly the same across every frame of the video as instructed.")
+    assert len(narration) > flow_robot.AGENT_PROSE_LEN
+    assert flow_robot.classify(narration) is None
+    # a real short banner on its own line is still caught, even next to the narration
+    assert flow_robot.classify(narration + "\nWe noticed unusual activity.") is flow_robot.Paused
 
 
 def test_only_new_lines_count_and_our_prompt_echo_is_ignored():
@@ -86,6 +99,23 @@ def make_client():
 ''')
     yield script
     transform_adapter._modules.clear()
+
+
+@pytest.fixture(autouse=True)
+def batch_through_fake_edit(monkeypatch):
+    """The transform step sends a clip's pieces to edit_many; here that runs each piece
+    through flow_robot.edit, which the tests below replace with a fake."""
+    def many(pieces, instruction, cfg):
+        out = {}
+        for key, segment, dst, base in pieces:
+            try:
+                out[key] = flow_robot.edit(segment, instruction, dst, base, cfg)
+            except (flow_robot.Paused, flow_robot.NeedsYou):
+                raise
+            except flow_robot.FlowError as err:
+                out[key] = err
+        return out
+    monkeypatch.setattr(flow_robot, "edit_many", many)
 
 
 def _flow_cfg(script):
@@ -169,7 +199,7 @@ def test_flow_and_vertex_edits_are_cached_apart(tmp_path, stub, monkeypatch):
 
 
 def test_look_step_is_not_offered_with_flow(tmp_path, stub):
-    with pytest.raises(ValueError, match="Flow"):
+    with pytest.raises(ValueError, match="only works with Vertex"):
         transform_adapter.make_look(tmp_path / "x.mp4", tmp_path, _flow_cfg(stub))
 
 
@@ -189,7 +219,7 @@ def test_conform_matches_size_and_rate_without_stretching(tmp_path):
 def test_conform_rejects_a_piece_flow_cut_short(tmp_path):
     seg = make_clip(tmp_path / "seg.mp4", seconds=5)
     cut = make_clip(tmp_path / "cut.mp4", seconds=4, size="360x640", tone=False)
-    with pytest.raises(flow_robot.Failed, match="4.0 s for a 5.0 s"):
+    with pytest.raises(flow_robot.Failed, match="4.0 s long for a 5.0 s"):
         transform_adapter.conform(cut, seg, tmp_path / "out.mp4")
     assert not (tmp_path / "out.mp4").exists() and not (tmp_path / "out.part.mp4").exists()
 
@@ -261,3 +291,112 @@ def test_flows_status_polls_are_read():
     assert result == "5abcf7ad-99b2-4491-8dd7-7ce1491b5cf3" and status == flow_robot.DONE
     assert "5a477943-b75b-4fef-b882-df33ccfc3eb4" in sources
     assert flow_robot.generations_from('[["wrb.fr","nzlxg","[886]"]]') == []
+
+
+# ------------------------------------------------------------------ a whole clip at once (fake browser)
+
+class FakeRun:
+    """Stands in for the robot's browser session: records what it's asked to do."""
+    events, polls, fail_once = [], {}, set()
+
+    def __init__(self, cfg):
+        self.page = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def open_project(self):
+        FakeRun.events.append("open")
+
+    def clear_prompt(self):
+        pass
+
+    def upload(self, file, name):
+        FakeRun.events.append(f"upload {name}")
+
+    def upload_id(self, name):
+        return f"id-{name}"
+
+    def attach(self, name):
+        pass
+
+    def agent_on(self):
+        pass
+
+    def prompt(self, text):
+        FakeRun.events.append(f"prompt {text[-12:]}")
+
+    def click_generate(self):
+        return ""
+
+    def _check_pushback(self):
+        pass
+
+    def poll(self, p):
+        n = FakeRun.polls[p["name"]] = FakeRun.polls.get(p["name"], 0) + 1
+        if p["name"] in FakeRun.fail_once:
+            FakeRun.fail_once.discard(p["name"])
+            raise flow_robot.Failed("Flow: Sorry, this video failed to generate")
+        if n >= 2:
+            FakeRun.events.append(f"done {p['name']}")
+            return f"result-{p['name']}"
+        return None
+
+    def fetch(self, name, result, out):
+        out.write_bytes(b"video")
+
+
+@pytest.fixture
+def fake_browser(state, monkeypatch):
+    FakeRun.events, FakeRun.polls, FakeRun.fail_once = [], {}, set()
+    sleeps = []
+    monkeypatch.setattr(flow_robot, "_Run", FakeRun)
+    monkeypatch.setattr(flow_robot, "_tile_info", lambda page, name: None)
+    monkeypatch.setattr(flow_robot.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(flow_robot.media, "duration", lambda p: 10.0)
+    monkeypatch.setattr(flow_robot, "edit_many", REAL_EDIT_MANY)  # the real one, not the fake above
+    return sleeps
+
+
+def _pieces(tmp_path, n, clip="c"):
+    out = []
+    for i in range(1, n + 1):
+        seg = tmp_path / f"{clip}{i}.mp4"
+        seg.write_bytes(b"x")
+        out.append((i, seg, tmp_path / f"{clip}{i}_raw.mp4", f"clipper_{clip}_p{i:02d}"))
+    return out
+
+
+def test_all_pieces_start_before_any_is_collected(tmp_path, fake_browser):
+    results = flow_robot.edit_many(_pieces(tmp_path, 3), "Make him albino.", CFG)
+    assert sorted(results) == [1, 2, 3] and all(r.exists() for r in results.values())
+    first_done = next(i for i, e in enumerate(FakeRun.events) if e.startswith("done"))
+    prompts = [i for i, e in enumerate(FakeRun.events) if e.startswith("prompt")]
+    assert len(prompts) == 3 and max(prompts) < first_done      # all three generating at once
+    assert flow_robot.edits_today() == 3
+
+
+def test_next_clip_waits_twenty_seconds(tmp_path, fake_browser):
+    flow_robot.edit_many(_pieces(tmp_path, 1, "a"), "x", CFG)
+    fake_browser.clear()
+    flow_robot.edit_many(_pieces(tmp_path, 1, "b"), "x", CFG)
+    assert fake_browser and 15 < fake_browser[0] <= 20            # the gap before the next clip
+
+
+def test_a_failed_piece_gets_one_more_go_and_the_others_are_kept(tmp_path, fake_browser):
+    FakeRun.fail_once = {"clipper_c_p02"}
+    roomy = {**CFG, "flow": {**CFG["flow"], "daily_max_edits": 10}}
+    results = flow_robot.edit_many(_pieces(tmp_path, 3), "x", roomy)
+    assert all(not isinstance(r, Exception) for r in results.values())
+    assert sum(1 for e in FakeRun.events if e == "open") == 2      # a second round for piece 2 only
+    assert [e for e in FakeRun.events if e.startswith("upload")][-1].startswith("upload clipper_c_p02")
+
+
+def test_daily_cap_mid_clip_finishes_started_pieces_then_waits(tmp_path, fake_browser):
+    flow_robot.save_state(day=time.strftime("%Y-%m-%d"), edits_today=2)   # cap is 3 in CFG
+    with pytest.raises(flow_robot.Paused, match="Daily cap"):
+        flow_robot.edit_many(_pieces(tmp_path, 3), "x", CFG)
+    assert (tmp_path / "c1_raw.mp4").exists()                    # the one that started was kept

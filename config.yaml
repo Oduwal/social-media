@@ -95,7 +95,9 @@ shotcut:
 # Google's terms restrict automated use, so it paces itself and stops on anything unusual.
 flow:
   daily_max_edits: 15         # each edit of a 10 s piece costs about 20 Flow credits (measured; Google lists 40)
-  min_gap_s: 60               # random pause between edits, in seconds
+  clip_gap_s: 20              # all of a clip's pieces run in Flow at once; then this pause before the next clip
+  piece_gap_s: 3              # seconds between starting one piece and the next within a clip
+  min_gap_s: 60               # (single-piece edits only) random pause between edits, in seconds
   max_gap_s: 180
   cooldown_minutes: 60        # pause after Flow reports unusual activity or limits
   timeout_minutes: 12         # give up on one edit after this long

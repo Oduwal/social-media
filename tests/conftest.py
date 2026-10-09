@@ -45,3 +45,20 @@ def no_real_studio(tmp_path, monkeypatch):
         raise studio.StudioError("HyperFrames isn't run in tests")
     monkeypatch.setattr(studio, "_run", blocked)
     monkeypatch.setattr(studio, "STATE_PATH", tmp_path / "studio_server.json")
+
+
+@pytest.fixture(autouse=True)
+def no_real_robot(tmp_path, monkeypatch):
+    """Tests never drive the real Flow robot window (it's your signed-in Chrome, and an edit
+    spends credits) and never touch its real state file. A test that needs the robot
+    replaces edit / edit_many / _Run itself."""
+    from clipper import flow_robot
+
+    def no_flow(*args, **kwargs):
+        raise flow_robot.FlowError("The real Flow robot isn't used in tests")
+
+    monkeypatch.setattr(flow_robot, "_Run", no_flow)
+    monkeypatch.setattr(flow_robot, "open_window", no_flow)
+    monkeypatch.setattr(flow_robot, "browser_running", lambda cfg: False)
+    monkeypatch.setattr(flow_robot, "STATE_PATH", tmp_path / "flow_state.json")
+    monkeypatch.setattr(flow_robot, "UPLOAD_DIR", tmp_path / "flow_uploads")

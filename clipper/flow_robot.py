@@ -5,10 +5,11 @@ has its own profile (data/flow_profile), signed in once by you:
     upload the piece -> right-click its tile -> Add to prompt -> Agent on ->
     paste the prompt -> Generate -> wait -> fetch the result
 
-Google has no API for Flow and its terms restrict automated use, so this goes slowly on
-purpose: one edit at a time, a pause between edits, a daily cap, and it stops (and waits
-for you) on anything unusual: signed out, a rights notice, "unusual activity", or running
-low on credits. It never tries to get around a check.
+A clip's pieces all run at once (edit_many): each is started a few seconds apart, they
+generate together, then each result is fetched; the next clip starts flow: clip_gap_s (20 s)
+later. Google has no API for Flow and its terms restrict automated use, so there's a daily
+cap, and it stops (and waits for you) on anything unusual: signed out, a rights notice,
+"unusual activity", or running low on credits. It never tries to get around a check.
 """
 
 import json
@@ -38,7 +39,9 @@ CHROME_PATHS = (r"C:\Program Files\Google\Chrome\Application\chrome.exe",
 
 DEFAULTS = {"chrome_path": "", "debug_port": 9333, "project_url": "", "min_gap_s": 60, "max_gap_s": 180,
             "daily_max_edits": 15, "cooldown_minutes": 60, "timeout_minutes": 12, "upload_timeout_minutes": 6,
-            "start_timeout_minutes": 3}
+            "start_timeout_minutes": 3,
+            "clip_gap_s": 20,    # pause before starting the next clip (all its pieces run at once)
+            "piece_gap_s": 3}    # pause between starting one piece and the next within a clip
 
 # Phrases Flow shows when something went wrong, by what Clipper should do about it.
 # Kept specific: a bare word like "policy" also appears in links and notices.
@@ -165,9 +168,15 @@ def gap_wait(cfg: dict, state: dict = None) -> float:
     return max(0.0, last + gap - time.time())
 
 
+# Flow's Agent narrates what it's doing in long prose ("I'm going to edit the attached image…"),
+# which can happen to contain a trouble word. Real notices (a rights prompt, "unusual activity",
+# "failed to generate", a policy refusal) are short banners/toasts, so skip long narration lines.
+AGENT_PROSE_LEN = 160
+
+
 def classify(new_text: str) -> type:
     """The FlowError class for text that appeared on the page, or None."""
-    low = new_text.lower()
+    low = "\n".join(ln for ln in new_text.lower().splitlines() if len(ln) <= AGENT_PROSE_LEN)
     if any(w in low for w in RIGHTS_WORDS) or any(w in low for w in CREDIT_WORDS):
         return NeedsYou
     if any(w in low for w in BLOCKED_WORDS):
@@ -587,6 +596,49 @@ class _Run:
             time.sleep(1.5)
         return ""
 
+    def poll(self, p: dict):
+        """One look at a piece that's generating alongside others: its result id once done,
+        None while it runs. Raises Failed/Refused/TimedOut for this piece only, and
+        Paused/NeedsYou (they concern the whole robot) for everything."""
+        now = time.time()
+        fresh = new_lines(p["before"], self._text(), self.prompt_text)
+        problem = classify(fresh)
+        if problem in (Paused, NeedsYou):
+            raise problem(f"Flow: {' '.join(fresh.split())[:300]}")
+        info = _tile_info(self.page, p["name"]) or {}
+        progress = re.findall(r"\b(\d{1,3})%", info.get("text", ""))
+        if progress and progress[-1] != p["progress"]:
+            p["progress"], p["activity"], p["seen"] = progress[-1], now, True
+            log.info("Flow: %s at %s%%", p["name"], progress[-1])
+        # Flow's status polls cover every generation that's running or queued
+        ours = {r: (st, at) for r, (src, st, at) in self.generations.items()
+                if p["upload_id"] in src and r != p["upload_id"]}
+        if ours:
+            p["seen"] = True
+            p["activity"] = max(p["activity"], max(at for _, at in ours.values()))
+            if any(st == DONE for st, _ in ours.values()):
+                return next(r for r, (st, _) in ours.items() if st == DONE)
+            if all(st is not None and st > DONE for st, _ in ours.values()):
+                raise Failed("Flow: Sorry, this video failed to generate (not charged)")
+        if info.get("stacked") and "%" not in info.get("text", ""):
+            result = self.result_id(p["name"], p["upload_id"])
+            if result:
+                return result
+        start_late = not p["seen"] and now > p["submitted"] + float(self.fcfg["start_timeout_minutes"]) * 60
+        if now - p["activity"] > 120 or start_late:
+            if self.history_says_failed(p["name"]):
+                raise Failed("Flow: Sorry, this video failed to generate (not charged)")
+            if start_late:
+                if problem is Refused:
+                    raise Refused(f"Flow: {' '.join(fresh.split())[:300]}")
+                raise Failed("Flow didn't start the edit")
+            p["activity"] = now  # not failed: look again in a couple of minutes
+        # several run at once and Flow may queue some, so later pieces get a little longer
+        if now > p["submitted"] + float(self.fcfg["timeout_minutes"]) * 60 + 120 * p["position"]:
+            raise TimedOut(f"Flow didn't finish {p['name']} within {self.fcfg['timeout_minutes']} minutes; it may "
+                           f"still finish in the project, and a retry picks the result up from there")
+        return None
+
     def fetch(self, name: str, result_id: str, out: Path) -> None:
         src = ""
         for _ in range(4):
@@ -711,3 +763,156 @@ def edit(segment: Path, instruction: str, out: Path, base: str, cfg: dict) -> Pa
         except Exception as err:  # noqa: BLE001 - a Playwright error, a changed page...
             save_state(last_error=f"Flow robot: {err}"[:300], last_edit_at=time.time())
             raise FlowError(f"Flow robot stopped: {err}") from err
+
+
+# --------------------------------------------------------------------- a whole clip at once
+
+def edit_many(pieces: list, instruction: str, cfg: dict) -> dict:
+    """Edit all of a clip's pieces at the same time: start every one (a few seconds apart),
+    wait for them together, then fetch each result. Waits flow: clip_gap_s (20 s) after the
+    previous clip first. A piece that fails gets one more go.
+
+    pieces: [(key, segment, out, base)]: `out` is where the result goes, `base` names the
+    tile (as in edit()). Returns {key: out, or the FlowError for a piece that couldn't be
+    done}. Paused / NeedsYou are raised (after the pieces already running are collected),
+    because they stop the robot, not just one piece."""
+    results = {}
+    if not pieces:
+        return results
+    with _lock:
+        try:
+            todo = list(pieces)
+            for attempt in (1, 2):
+                _batch(todo, instruction, cfg, results)
+                todo = [p for p in todo if isinstance(results.get(p[0]), Failed)]
+                if not todo or attempt == 2:
+                    break
+                log.warning("Flow robot: %d piece(s) failed to generate; trying them once more", len(todo))
+            stop = next((r for r in results.values() if isinstance(r, (Paused, NeedsYou))), None)
+            if stop:
+                raise stop
+            return results
+        except Paused as err:
+            pause(str(err)[:200], float(settings(cfg)["cooldown_minutes"]))
+            save_state(last_error=str(err)[:300])
+            raise
+        except NeedsYou as err:
+            save_state(needs_you=str(err)[:300], last_error=str(err)[:300])
+            raise
+        except FlowError as err:
+            save_state(last_error=str(err)[:300])
+            raise
+        except Exception as err:  # noqa: BLE001 - a Playwright error, a changed page...
+            save_state(last_error=f"Flow robot: {err}"[:300])
+            raise FlowError(f"Flow robot stopped: {err}") from err
+        finally:
+            save_state(last_batch_at=time.time())
+
+
+def _batch(pieces: list, instruction: str, cfg: dict, results: dict) -> None:
+    fcfg = settings(cfg)
+    wait = float(load_state().get("last_batch_at") or 0) + float(fcfg["clip_gap_s"]) - time.time()
+    if wait > 0:
+        log.info("Flow robot: waiting %.0f s before the next clip", wait)
+        time.sleep(wait)
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    running, uploads = [], []
+    try:
+        with _Run(cfg) as run:
+            run.open_project()
+            run.clear_prompt()
+            # 1. start every piece
+            for position, (key, segment, out, base) in enumerate(pieces):
+                try:
+                    check_allowed(cfg)  # daily cap / pause / credits, before each new generation
+                except (Paused, NeedsYou) as err:
+                    results[key] = err  # the rest wait; the ones already started still finish
+                    continue
+                try:
+                    name = tile_name(base)
+                    info = _tile_info(run.page, name)
+                    known = (load_state().get("uploads") or {}).get(name, "")
+                    if info and known and info.get("stacked"):
+                        result = run.result_id(name, known)  # done earlier; only the download failed
+                        if result:
+                            running.append({"key": key, "out": out, "name": name, "result": result})
+                            continue
+                    if info and known:
+                        mark_done(name)  # used before without a result: start clean on a new tile
+                        name, info = tile_name(base), None
+                    if not info:
+                        upload = UPLOAD_DIR / f"{name}.mp4"
+                        shutil.copyfile(segment, upload)
+                        uploads.append(upload)
+                        run.upload(upload, name)
+                    try:
+                        upload_id = run.upload_id(name)
+                    except FlowError:
+                        if not info:
+                            raise
+                        # a tile left half-uploaded by an earlier, interrupted run: upload afresh
+                        mark_done(name)
+                        name = tile_name(base)
+                        upload = UPLOAD_DIR / f"{name}.mp4"
+                        shutil.copyfile(segment, upload)
+                        uploads.append(upload)
+                        run.upload(upload, name)
+                        upload_id = run.upload_id(name)
+                    remember_upload(name, upload_id)
+                    run.attach(name)
+                    run.agent_on()
+                    run.prompt(" ".join(instruction.split()) + length_note(media.duration(segment)))
+                    before = run.click_generate()
+                    count_edit()  # started: it likely costs credits whatever happens next
+                    now = time.time()
+                    log.info("Flow: generating %s (%d of %d at once)", name, position + 1, len(pieces))
+                    running.append({"key": key, "out": out, "name": name, "upload_id": upload_id, "before": before,
+                                    "submitted": now, "activity": now, "seen": False, "progress": "",
+                                    "position": position})
+                    time.sleep(float(fcfg["piece_gap_s"]))
+                    run.clear_prompt()
+                except (Paused, NeedsYou):
+                    raise
+                except Exception as err:  # noqa: BLE001 - this piece only; the started ones still finish
+                    results[key] = err if isinstance(err, FlowError) else FlowError(f"Flow robot: {err}")
+                    log.warning("Flow: couldn't start piece %s: %s", key, str(err)[:200])
+                    try:
+                        run.clear_prompt()
+                    except Exception:  # noqa: BLE001
+                        pass
+            # 2. wait for them together
+            pending = [p for p in running if "result" not in p]
+            while pending:
+                time.sleep(8)
+                run._check_pushback()
+                for p in list(pending):
+                    try:
+                        result = run.poll(p)
+                    except (Failed, Refused, TimedOut) as err:
+                        results[p["key"]] = err
+                        mark_done(p["name"])  # leave that tile alone
+                        pending.remove(p)
+                        log.warning("Flow: %s: %s", p["name"], err)
+                        continue
+                    if result:
+                        p["result"] = result
+                        pending.remove(p)
+                        log.info("Flow: %s done", p["name"])
+            # 3. fetch the results
+            for p in running:
+                if "result" not in p:
+                    continue
+                try:
+                    run.fetch(p["name"], p["result"], p["out"])
+                    mark_done(p["name"])
+                    results[p["key"]] = p["out"]
+                except FlowError as err:
+                    results[p["key"]] = err
+            save_state(last_error="")
+            try:
+                run.clear_prompt()
+            except Exception as err:  # noqa: BLE001 - tidying up only
+                log.warning("Flow: couldn't clear the prompt afterwards: %s", err)
+    finally:
+        for upload in uploads:
+            upload.unlink(missing_ok=True)

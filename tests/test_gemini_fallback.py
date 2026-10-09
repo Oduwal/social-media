@@ -91,3 +91,31 @@ def test_a_busy_429_rests_vertex_only_briefly(routes):
     import time
     gemini.make_client(CFG).models.generate_content(model="m")
     assert gemini.status(CFG)[0]["skipped_until"] - time.time() <= gemini.SHORT_REST_S + 1
+
+
+def test_the_google_client_stays_open_while_the_call_runs(monkeypatch):
+    """google-genai closes its connection when a genai.Client is garbage-collected; taking
+    `.models` from a throwaway client broke every highlight with "client has been closed"."""
+    import gc
+
+    gemini._down.clear()
+
+    class Models:
+        def __init__(self, owner):
+            self.owner_alive = owner
+
+        def generate_content(self, **kw):
+            gc.collect()
+            if self.owner_alive() is None:
+                raise RuntimeError("Cannot send a request, as the client has been closed.")
+            return "ok"
+
+    class ClosingClient:
+        def __init__(self):
+            import weakref
+            self.models = Models(weakref.ref(self))
+
+    monkeypatch.setattr(gemini, "_raw_client", lambda name, cfg: ClosingClient())
+    client = gemini.make_client(CFG)
+    assert client.models.generate_content(model="m") == "ok"
+    assert client.models.generate_content(model="m") == "ok"   # and it is reused, not rebuilt

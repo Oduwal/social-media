@@ -230,24 +230,60 @@ def _rejected_input(err: Exception) -> bool:
     return getattr(err, "code", None) == 400 or "INVALID_ARGUMENT" in text or "400" in text[:20]
 
 
+BACKENDS = ("vertex", "flow")
+
+
+def backend(cfg: dict) -> str:
+    """Where the albino edit runs: "vertex" (Omni API) or "flow" (the Flow robot)."""
+    name = str(cfg["transform"].get("backend") or "vertex").lower()
+    if name not in BACKENDS:
+        raise ValueError(f"transform: backend must be one of {', '.join(BACKENDS)}, not {name!r}")
+    return name
+
+
 def uses_flow(cfg: dict) -> bool:
-    return str(cfg["transform"].get("backend") or "vertex").lower() == "flow"
+    return backend(cfg) == "flow"
 
 
-def flow_edit(mod, cfg: dict, segment: Path, index: int, job_dir: Path) -> Path:
-    """Edit one piece through the Google Flow robot. The result is saved where the script
-    keeps its own edits (edited_NNN_<variant>.mp4), so caching, redo-a-piece and colour
-    matching work the same as with Vertex."""
+def _flow_paths(mod, index: int, job_dir: Path) -> tuple:
+    """(cached edit, raw Flow download, tile name) for one piece. The tile name is the same
+    for the same piece and request, so a retry finds its upload (or a result Flow already
+    made); the robot adds -2, -3... once a result has been used."""
     cache = Path(mod.WORK_PATH) / "edited" / f"edited_{index:03d}_{mod.EDIT_VARIANT}.mp4"
+    raw = cache.with_name(cache.stem + "_flow_raw.mp4")
+    base = f"clipper_{job_dir.name}_p{index:02d}_{hashlib.sha1(mod.EDIT_VARIANT.encode()).hexdigest()[:6]}"
+    return cache, raw, base
+
+
+def flow_batch(mod, cfg: dict, segments: list, job_dir: Path) -> dict:
+    """Start every piece of the clip on Flow at once (flow_robot.edit_many) and download the
+    results; returns {index: error} for pieces Flow couldn't do. Pieces already edited or
+    downloaded are skipped, so nothing is paid for twice. Paused/NeedsYou are raised."""
+    todo = []
+    for index, segment in enumerate(segments, start=1):
+        cache, raw, base = _flow_paths(mod, index, job_dir)
+        if cache.exists() or _playable(raw) or media.duration(segment) < MIN_EDIT_S:
+            continue
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        todo.append((index, segment, raw, base))
+    if not todo:
+        return {}
+    results = flow_robot.edit_many(todo, mod.EDIT_INSTRUCTION, cfg)
+    return {index: r for index, r in results.items() if isinstance(r, Exception)}
+
+
+def flow_edit(mod, cfg: dict, segment: Path, index: int, job_dir: Path, batch_errors: dict = None) -> Path:
+    """One piece's Flow result, conformed and saved where the script keeps its own edits
+    (edited_NNN_<variant>.mp4), so caching, redo-a-piece and colour matching work the same
+    as with Vertex. Normally flow_batch already downloaded it."""
+    cache, raw, base = _flow_paths(mod, index, job_dir)
     if cache.exists():
         return cache
     cache.parent.mkdir(parents=True, exist_ok=True)
-    raw = cache.with_name(cache.stem + "_flow_raw.mp4")
     if not _playable(raw):  # a result already downloaded (e.g. conform failed last time) isn't paid for twice
-        # Same name for the same piece and request, so a retry finds its upload (or a
-        # result Flow already made); the robot adds -2, -3... once a result has been used.
-        base = f"clipper_{job_dir.name}_p{index:02d}_{hashlib.sha1(mod.EDIT_VARIANT.encode()).hexdigest()[:6]}"
         try:
+            if batch_errors and index in batch_errors:
+                raise batch_errors[index]
             flow_robot.edit(segment, mod.EDIT_INSTRUCTION, raw, base, cfg)
         except flow_robot.Refused as err:
             raise ContentBlocked(str(err)) from err
@@ -280,7 +316,7 @@ def conform(edited: Path, segment: Path, out: Path) -> Path:
     fps = _fps(segment)
     seg_len, ed_len = media.duration(segment), _video_length(edited)
     if abs(seg_len - ed_len) > MAX_LENGTH_GAP_S:
-        raise flow_robot.Failed(f"Flow returned {ed_len:.1f} s for a {seg_len:.1f} s piece")
+        raise flow_robot.Failed(f"The edit came back {ed_len:.1f} s long for a {seg_len:.1f} s piece")
     pad = f",tpad=stop_mode=clone:stop_duration={seg_len - ed_len + 0.1:.3f}" if ed_len < seg_len else ""
     tmp = out.with_name(out.stem + ".part.mp4")
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", edited, "-i", segment,
@@ -315,8 +351,8 @@ def make_look(highlight: Path, job_dir: Path, cfg: dict, target: str = "") -> Pa
     """The reference picture: Omni edits a 2-second still of one frame from the clip, and
     a frame of its answer becomes look.jpg, which every piece is then asked to match.
     Uses the same video-in, video-out path as the pieces, so nothing new is assumed."""
-    if uses_flow(cfg):
-        raise ValueError("The reference look isn't available with the Flow robot (transform: reference: false)")
+    if backend(cfg) != "vertex":
+        raise ValueError("The reference look only works with Vertex (set transform: reference: false)")
     mod = load_script(cfg["transform"]["script_path"])
     work = job_dir / "look_work"
     work.mkdir(parents=True, exist_ok=True)
@@ -355,15 +391,20 @@ def run(highlight: Path, job_dir: Path, cfg: dict, target: str = "", reference_i
     reference_rejected = None
 
     _discard_bad_cache(work, highlight)
-    flow = uses_flow(cfg)
-    client = None if flow else client_for(mod, cfg)
+    route = backend(cfg)
+    flow = route == "flow"
+    client = client_for(mod, cfg) if route == "vertex" else None
+    segments = mod.split_video(highlight)
+    flow_errors = {}
+    if flow:
+        # every piece of the clip goes to Flow at once; Paused/NeedsYou stop the clip here
+        flow_errors = flow_batch(mod, cfg, segments, job_dir)
 
     def edit_piece(segment, index):
         if flow:
-            return flow_edit(mod, cfg, segment, index, job_dir)
+            return flow_edit(mod, cfg, segment, index, job_dir, flow_errors)
         return Path(mod.edit_segment(client, segment, index, verbose=False))
 
-    segments = mod.split_video(highlight)
     clips, fallback, tiny = [], [], []
     pieces = []  # one entry per segment: what went into the final clip, for the per-piece view and redo
     offset = max_offset = 0.0
@@ -376,8 +417,10 @@ def run(highlight: Path, job_dir: Path, cfg: dict, target: str = "", reference_i
 
     for index, segment in enumerate(segments, start=1):
         seg_len = media.duration(segment)
-        if blocked:
+        if blocked and not (flow and (_playable(_flow_paths(mod, index, job_dir)[1])
+                                      or _flow_paths(mod, index, job_dir)[0].exists())):
             # Google refused an earlier segment of this clip; it would refuse these too
+            # (with Flow they all ran at once: a piece Flow did make is still used)
             original(index, segment, "original")
             fallback.append(index)
             continue
@@ -459,7 +502,7 @@ def run(highlight: Path, job_dir: Path, cfg: dict, target: str = "", reference_i
         "pieces": pieces,
         "colour_match": colour,
         "model": "Google Flow (Omni 1.1 Flash, Agent)" if flow else getattr(mod, "VIDEO_MODEL_NAME", ""),
-        "backend": "flow" if flow else "vertex",
+        "backend": route,
         "strict_look": bool(tcfg.get("strict_look")),
         "reference": bool(reference_image),
         "reference_rejected": reference_rejected,

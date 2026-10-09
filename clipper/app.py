@@ -798,7 +798,7 @@ def redo_piece(video_id: str, index: int = Form(...)):
     if piece["kind"] == "sliver":
         raise HTTPException(409, "This piece is under a second long, so it isn't sent to Omni")
     made_with = (job.get("transform_info") or {}).get("backend") or "vertex"
-    now_on = "flow" if transform_adapter.uses_flow(config.load()) else "vertex"
+    now_on = transform_adapter.backend(config.load())
     if made_with != now_on:
         # the other pieces' edits are kept under the old route's name: all of them would be redone
         raise HTTPException(409, f"This clip was made with {made_with.title()}, but albino edits now run on "
