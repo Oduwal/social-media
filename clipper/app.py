@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import captions, catalog, cli_lock, config, db, downloader, editor2, gemini, media, monitor, music
+from . import agentrouter, captions, catalog, cli_lock, config, db, downloader, editor2, gemini, media, monitor, music
 from . import platforms, project, render, render2, shotcut, studio
 from . import flow_robot, transform_adapter, trending, worker
 
@@ -855,7 +855,10 @@ def connections(request: Request, msg: str = "", error: str = ""):
         "status": {p: platforms.module(p).status(cfg) for p in config.PLATFORMS},
         "saved": {name: bool(config.secret(name)) for name in config.SECRET_NAMES},
         "gemini": gemini.status(cfg),
+        "agentrouter": agentrouter.status(cfg),
         "flow": flow_robot.status(cfg),
+        "use_vertex": "vertex" in cfg["gemini"]["backends"],
+        "creators": cfg["creators"],
     })
 
 
@@ -874,6 +877,41 @@ async def save_keys(request: Request):
         config.set_secret(name, str(form.get(name)))
     return _to_connections(msg=f"Saved {len(changed)} key{'s' if len(changed) != 1 else ''}." if changed
                            else "Nothing to save: paste a key first.")
+
+
+@app.post("/connections/gemini/vertex")
+def gemini_vertex():
+    """Turn the Vertex route on/off (the button on the Gemini card)."""
+    on_now = "vertex" in config.load()["gemini"]["backends"]
+    config.ui_set(use_vertex=not on_now)
+    hooks["wake_worker"]()
+    return _to_connections(msg="Vertex is ON — Clipper will try your Cloud project first." if not on_now
+                           else "Vertex is OFF — Clipper uses only your free Gemini key(s).")
+
+
+@app.post("/connections/creators/add")
+async def creators_add(request: Request):
+    form = await request.form()
+    tags = [t for t in re.split(r"[,\s]+", str(form.get("hashtags") or "")) if t.strip()]
+    try:
+        config.add_creator(str(form.get("handle") or ""), str(form.get("credit") or ""), tags)
+    except ValueError as err:
+        return _to_connections(error=str(err))
+    hooks["poll_now"]()
+    return _to_connections(msg=f"Now watching @{str(form.get('handle')).lstrip('@').strip()}.")
+
+
+@app.post("/connections/creators/remove")
+def creators_remove(handle: str = Form(...)):
+    config.remove_creator(handle)
+    return _to_connections(msg=f"Stopped watching @{handle.lstrip('@').strip()}.")
+
+
+@app.post("/connections/creators/toggle")
+def creators_toggle(handle: str = Form(...), enabled: str = Form("")):
+    config.set_creator_enabled(handle, enabled == "on")
+    hooks["poll_now"]()
+    return _to_connections(msg="Updated.")
 
 
 @app.post("/connections/flow/open")

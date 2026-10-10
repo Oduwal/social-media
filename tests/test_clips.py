@@ -39,8 +39,10 @@ def test_clips_step_creates_a_clip_per_highlight_and_cut_makes_previews(fresh_db
     assert first["state"] == "NEW" and first["parent_id"] == vid and first["info"]["title"] == "t1"
     assert first["captions"]["tiktok"].startswith("cap 1") and "#c" in first["captions"]["tiktok"]
 
+    # with auto_finish off, a cut clip waits in PREVIEW for the user to pick it
+    preview_cfg = config._merge(CFG, {"pipeline": {"auto_finish": False}})
     for clip in clips:
-        worker.advance(clip, CFG)
+        worker.advance(clip, preview_cfg)
     first = fresh_db.get(f"{vid}-01")
     assert first["state"] == "PREVIEW"
     assert (config.job_dir(first["video_id"]) / "highlight.mp4").exists()

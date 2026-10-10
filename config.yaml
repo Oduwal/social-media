@@ -38,9 +38,21 @@ gemini:
   location: "global"          # 3.x models are NOT served from us-central1
   model: "gemini-3.5-flash"   # do not use gemini-2.5-*: retired 2026-10-20
   service_account_key: 'C:\Users\ODUWA\Pictures\project-8b3114be-add7-457c-84b-d3079480ce6e.json'
+  backends: ["aistudio"]      # vertex has no billing; use only the free AI Studio key
+
+# Which engine picks the highlights.
+highlight:
+  engine: "gemini"            # "gemini" watches the video | "agentrouter" reads its transcript
+  agentrouter:                # Claude/OpenAI via the Agent Router gateway (paste the key on Connections)
+    base_url: "https://agentrouter.org/v1"
+    model: "claude-sonnet-4-5-20250929"
+
+# Scrapping the albino edit: clips go straight to READY as-is (see pipeline.auto_finish).
+pipeline:
+  auto_finish: true          # every clip auto-processed to READY; set false to pick clips yourself
 
 transform:
-  enabled: true
+  enabled: false             # was the albino edit; off now
   # Where the albino edit runs: "vertex" (Gemini API, paid from Cloud billing) or "flow" (the
   # Google Flow robot: drives flow.google.com in its own Chrome window on your AI Pro plan;
   # set it up on the Connections page). With "flow", model/resolution/reference below don't apply.

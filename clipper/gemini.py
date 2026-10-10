@@ -12,6 +12,7 @@ doesn't wait on it first. Other errors (a bad request) are raised as they are.
 """
 
 import logging
+import re
 import threading
 import time
 
@@ -49,6 +50,23 @@ def account_problem(err: Exception) -> bool:
     return code == 429  # quota-less 429: still worth the other route, but only briefly (see rest_for)
 
 
+TRANSIENT_BACKOFF = (3, 10, 25)  # seconds to wait before each retry of a temporary error
+
+
+def transient(err: Exception) -> bool:
+    """A blip worth retrying on the same route: Google overloaded (503 'high demand'), a 5xx,
+    or a brief network error. Not an account problem (handled separately) or a bad request."""
+    code = getattr(err, "code", None) or getattr(err, "status_code", None)
+    text = str(err).lower()
+    if code in (500, 502, 503, 504):
+        return True
+    if any(w in text for w in TEMPORARY_WORDS):
+        return True
+    return any(w in text for w in ("getaddrinfo", "temporarily unavailable", "connection reset",
+                                   "connection aborted", "connection error", "timed out", "read timeout",
+                                   "high demand", "try again"))
+
+
 def rest_for(err: Exception) -> float:
     """How long to skip a route after an account problem."""
     text = str(err).lower()
@@ -58,24 +76,38 @@ def rest_for(err: Exception) -> float:
     return SKIP_FAILED_S
 
 
+def keys() -> list:
+    """The AI Studio API keys (GEMINI_API_KEY may hold several, separated by commas/spaces/lines),
+    so one account hitting its daily limit rotates to the next."""
+    raw = config.secret("GEMINI_API_KEY")
+    seen, out = set(), []
+    for k in re.split(r"[,\s]+", raw.strip()) if raw else []:
+        if k and k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out
+
+
 def available(cfg: dict) -> list:
-    """The backends that are set up, in the configured order."""
+    """The routes that are set up, in order: "vertex" and one "aistudio#<i>" per API key.
+    Each route rests on its own, so a used-up key is skipped while the others keep working."""
     gcfg = cfg["gemini"]
     order = [b for b in (gcfg.get("backends") or BACKENDS) if b in BACKENDS]
     ready = []
     for name in order:
         if name == "vertex" and gcfg.get("project_id") and gcfg.get("service_account_key"):
-            ready.append(name)
-        elif name == "aistudio" and config.secret("GEMINI_API_KEY"):
-            ready.append(name)
+            ready.append("vertex")
+        elif name == "aistudio":
+            ready += [f"aistudio#{i}" for i in range(len(keys()))]
     return ready
 
 
-def _raw_client(name: str, cfg: dict):
+def _raw_client(route: str, cfg: dict):
     from google import genai
 
-    if name == "aistudio":
-        return genai.Client(api_key=config.secret("GEMINI_API_KEY"))
+    if route.startswith("aistudio"):
+        i = int(route.split("#", 1)[1]) if "#" in route else 0
+        return genai.Client(api_key=keys()[i])
     from google.oauth2 import service_account
 
     gcfg = cfg["gemini"]
@@ -86,13 +118,25 @@ def _raw_client(name: str, cfg: dict):
 
 
 def status(cfg: dict) -> list:
-    """[{name, ready, skipped_until, reason}] for the dashboard."""
+    """[{name, label, ready, skipped_until, reason}] for the dashboard, one row per route:
+    Vertex (if configured) and each AI Studio key."""
     now = time.time()
     ready = available(cfg)
+    order = [b for b in (cfg["gemini"].get("backends") or BACKENDS) if b in BACKENDS]
+    rows = []
+    if "vertex" in order:
+        rows.append(("vertex", "Vertex AI (your Cloud project)"))
+    if "aistudio" in order:
+        n = len(keys())
+        if n == 0:
+            rows.append(("aistudio", "Free Gemini API key"))
+        else:
+            rows += [(f"aistudio#{i}", f"Free Gemini key #{i + 1}" if n > 1 else "Free Gemini API key")
+                     for i in range(n)]
     out = []
-    for name in (cfg["gemini"].get("backends") or BACKENDS):
+    for name, label in rows:
         until, reason = _down.get(name, (0, ""))
-        out.append({"name": name, "ready": name in ready,
+        out.append({"name": name, "label": label, "ready": name in ready,
                     "skipped_until": until if until > now else None, "reason": reason if until > now else ""})
     return out
 
@@ -134,23 +178,34 @@ class Client:
         # if every backend is resting, try them anyway rather than fail without asking
         errors = []
         for name in live or names:
-            try:
-                result = getattr(self._client(name).models, method)(*args, **kwargs)
-            except Exception as err:  # noqa: BLE001
-                if not account_problem(err):
+            # retry a temporary blip (overloaded, 5xx, network) on this route before moving on
+            for attempt in range(len(TRANSIENT_BACKOFF) + 1):
+                try:
+                    result = getattr(self._client(name).models, method)(*args, **kwargs)
+                except Exception as err:  # noqa: BLE001
+                    if account_problem(err):
+                        with _lock:
+                            _down[name] = (time.time() + rest_for(err), str(err)[:300])
+                        log.warning("Gemini via %s unavailable (%s); trying the next one", name, str(err)[:200])
+                        errors.append(f"{name}: {str(err)[:200]}")
+                        break  # next route
+                    if transient(err) and attempt < len(TRANSIENT_BACKOFF):
+                        wait = TRANSIENT_BACKOFF[attempt]
+                        log.info("Gemini via %s: temporary error, retrying in %ds (%s)",
+                                 name, wait, str(err)[:120])
+                        time.sleep(wait)
+                        continue
+                    # out of retries, or a real request error: stay on this route and raise rather
+                    # than fall through to another route (a blip mustn't send clips to the free tier)
                     raise
-                with _lock:
-                    _down[name] = (time.time() + rest_for(err), str(err)[:300])
-                log.warning("Gemini via %s unavailable (%s); trying the next one", name, str(err)[:200])
-                errors.append(f"{name}: {str(err)[:200]}")
-                continue
-            with _lock:
-                _down.pop(name, None)
-            if self.used != name:
-                log.info("Gemini via %s", name)
-            self.used = name
-            return result
-        raise NoGemini("Every Gemini route refused: " + " | ".join(errors))
+                else:
+                    with _lock:
+                        _down.pop(name, None)
+                    if self.used != name:
+                        log.info("Gemini via %s", name)
+                    self.used = name
+                    return result
+        raise NoGemini("Every Gemini route is temporarily unavailable or refused: " + " | ".join(errors))
 
 
 def make_client(cfg: dict) -> Client:

@@ -22,14 +22,14 @@ def test_video_id_encodes_post_time():
 def test_backlog_is_skipped_even_when_it_shows_up_later(fresh_db, monkeypatch):
     now = int(time.time())
     first = [{"id": vid_at(now - 86400 * i), "url": ""} for i in range(1, 6)]
-    monkeypatch.setattr(monitor, "list_latest", lambda cfg: first)
+    monkeypatch.setattr(monitor, "list_latest", lambda cfg, handle=None: first)
     assert monitor.poll_once(CFG) == 0
     assert all(fresh_db.get(v["id"])["state"] == "SKIPPED" for v in first)
 
     # Next poll lists MORE old posts (e.g. yt-dlp gives 10 where Apify gave 5) plus one new post.
     older = [{"id": vid_at(now - 86400 * i), "url": ""} for i in range(6, 11)]
     fresh = [{"id": vid_at(now + 60), "url": ""}]
-    monkeypatch.setattr(monitor, "list_latest", lambda cfg: fresh + first + older)
+    monkeypatch.setattr(monitor, "list_latest", lambda cfg, handle=None: fresh + first + older)
     assert monitor.poll_once(CFG) == 1
     assert fresh_db.get(fresh[0]["id"])["state"] == "DETECTED"
     assert all(fresh_db.get(v["id"])["state"] == "SKIPPED" for v in older)

@@ -1,6 +1,7 @@
 """Paths and settings. Settings come from config.yaml (merged over DEFAULTS) and secrets from .env."""
 
 import copy
+import json
 import os
 from pathlib import Path
 
@@ -22,6 +23,10 @@ DEFAULTS = {
     "clip": {"min_seconds": 15, "max_seconds": 45},
     "gemini": {"project_id": "", "location": "global", "model": "gemini-3.5-flash",
                "service_account_key": "", "backends": ["vertex", "aistudio"]},
+    # Which engine picks highlights: "gemini" watches the video; "agentrouter" reads a transcript
+    # of it (Claude/OpenAI via the Agent Router gateway, an OpenAI-compatible API).
+    "highlight": {"engine": "gemini",
+                  "agentrouter": {"base_url": "https://agentrouter.org/v1", "model": "claude-sonnet-4-5-20250929"}},
     "transform": {"enabled": True, "script_path": "", "variant": "albinism", "model": "",
                   "strict_look": False, "reference": False, "colour_match": True, "instruction": "",
                   "resolution": "", "backend": "vertex"},
@@ -29,6 +34,9 @@ DEFAULTS = {
     "flow": {"chrome_path": "", "debug_port": 9333, "project_url": "", "min_gap_s": 60, "max_gap_s": 180,
              "clip_gap_s": 20, "piece_gap_s": 3,
              "daily_max_edits": 15, "cooldown_minutes": 60, "timeout_minutes": 12, "upload_timeout_minutes": 6},
+    # auto_finish: send every cut clip straight through to READY (no manual pick in PREVIEW,
+    # no albino transform). Turn off to review and pick clips one by one.
+    "pipeline": {"auto_finish": True},
     "music": {"default_volume": 0.18, "ducking": True},
     "upload_post": {"profile": "", "platforms": ["tiktok", "instagram", "x"],
                     "tiktok_privacy_level": "SELF_ONLY", "ai_label": True},
@@ -45,7 +53,7 @@ DEFAULTS = {
 # Secrets the Connections page can save into .env
 SECRET_NAMES = ("UPLOAD_POST_API_KEY", "APIFY_TOKEN", "TIKTOK_CLIENT_KEY", "TIKTOK_CLIENT_SECRET",
                 "META_APP_ID", "META_APP_SECRET", "X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN",
-                "X_ACCESS_TOKEN_SECRET", "GEMINI_API_KEY")
+                "X_ACCESS_TOKEN_SECRET", "GEMINI_API_KEY", "AGENTROUTER_API_KEY")
 
 PLATFORMS = ("tiktok", "instagram", "x")
 
@@ -85,7 +93,87 @@ def load() -> dict:
     cfg["creator"]["handle"] = handle
     if not cfg["creator"]["credit"] and handle:
         cfg["creator"]["credit"] = f"🎥 @{handle}"
+
+    # Things the dashboard can change without editing config.yaml live in data/ui.json.
+    ui = ui_get()
+    if "use_vertex" in ui:  # the Vertex on/off button
+        cfg["gemini"]["backends"] = ["vertex", "aistudio"] if ui["use_vertex"] else ["aistudio"]
+
+    # The creators being watched: the dashboard's list wins; otherwise config.yaml's
+    # 'creators:' list, otherwise the single 'creator:' (so old configs keep working).
+    if isinstance(ui.get("creators"), list):
+        source = ui["creators"]
+    elif isinstance(user.get("creators"), list):
+        source = user["creators"]
+    else:
+        source = [cfg["creator"]] if handle else []
+    cfg["creators"] = [creator_entry(c.get("handle"), c.get("credit"), c.get("hashtags"),
+                                     c.get("enabled", True)) for c in source if (c.get("handle") or "").strip()]
+    if cfg["creators"]:
+        cfg["creator"] = {k: cfg["creators"][0][k] for k in ("handle", "credit", "hashtags")}
     return cfg
+
+
+def creator_for(cfg: dict, handle: str) -> dict:
+    """The creator a video (by its handle) belongs to, for its credit and hashtags; falls back
+    to the first creator for videos saved before multi-creator, or added by link."""
+    handle = (handle or "").lstrip("@").strip().lower()
+    for c in cfg.get("creators") or []:
+        if c["handle"].lower() == handle:
+            return c
+    return (cfg.get("creators") or [cfg["creator"]])[0]
+
+
+def creator_entry(handle: str, credit: str = "", hashtags=None, enabled: bool = True) -> dict:
+    handle = (handle or "").lstrip("@").strip()
+    return {"handle": handle, "credit": (credit or "").strip() or (f"🎥 @{handle}" if handle else ""),
+            "hashtags": list(hashtags or []), "enabled": bool(enabled)}
+
+
+UI_PATH = DATA_DIR / "ui.json"
+
+
+def ui_get() -> dict:
+    try:
+        return json.loads(UI_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def ui_set(**fields) -> dict:
+    data = {**ui_get(), **fields}
+    UI_PATH.parent.mkdir(parents=True, exist_ok=True)
+    UI_PATH.write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
+    return data
+
+
+def save_creators(creators: list) -> None:
+    """Store the dashboard's creator list (from then on it's the source, not config.yaml)."""
+    ui_set(creators=[creator_entry(c.get("handle"), c.get("credit"), c.get("hashtags"),
+                                   c.get("enabled", True)) for c in creators if (c.get("handle") or "").strip()])
+
+
+def add_creator(handle: str, credit: str = "", hashtags=None) -> None:
+    handle = (handle or "").lstrip("@").strip()
+    if not handle:
+        raise ValueError("Enter a TikTok handle")
+    creators = [c for c in load()["creators"] if c["handle"].lower() != handle.lower()]
+    creators.append(creator_entry(handle, credit, hashtags))
+    save_creators(creators)
+
+
+def remove_creator(handle: str) -> None:
+    handle = (handle or "").lstrip("@").strip().lower()
+    save_creators([c for c in load()["creators"] if c["handle"].lower() != handle])
+
+
+def set_creator_enabled(handle: str, enabled: bool) -> None:
+    handle = (handle or "").lstrip("@").strip().lower()
+    creators = load()["creators"]
+    for c in creators:
+        if c["handle"].lower() == handle:
+            c["enabled"] = enabled
+    save_creators(creators)
 
 
 def secret(name: str) -> str:

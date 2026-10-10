@@ -70,12 +70,12 @@ def video_time(video_id: str) -> int:
     return int(video_id) >> 32
 
 
-def list_latest(cfg: dict = None) -> list:
+def list_latest(cfg: dict = None, handle: str = None) -> list:
     """Newest posts as [{"id", "url"}], trying each source in turn."""
     cfg = cfg or config.load()
-    handle = cfg["creator"]["handle"]
+    handle = handle or cfg["creator"]["handle"]
     if not handle:
-        raise MonitorError("Set creator.handle in config.yaml")
+        raise MonitorError("Set a creator to watch (config.yaml or the dashboard)")
     limit = int(cfg["monitor"]["playlist_end"])
     sec_uid = db.kv_get(sec_uid_key(handle))
     errors = []
@@ -120,14 +120,28 @@ def remember_sec_uid(channel_id: str, uploader: str, handle: str) -> None:
 
 
 def poll_once(cfg: dict = None) -> int:
-    """Returns how many new videos were queued.
-
-    The first poll for a handle records when watching started. Any post from
-    BEFORE that moment is backlog and is stored as SKIPPED, however it turns up
-    later (a longer listing, a pinned video, a different source)."""
+    """Poll every enabled creator; returns how many new videos were queued across all of them.
+    One creator failing (a blocked listing) doesn't stop the others."""
     cfg = cfg or config.load()
-    handle = cfg["creator"]["handle"]
-    videos = list_latest(cfg)
+    handles = [c["handle"] for c in cfg.get("creators") or [] if c.get("enabled", True) and c["handle"]]
+    if not handles:
+        handles = [cfg["creator"]["handle"]] if cfg["creator"]["handle"] else []
+    new, errors = 0, []
+    for handle in handles:
+        try:
+            new += poll_creator(cfg, handle)
+        except Exception as err:  # noqa: BLE001
+            errors.append(f"@{handle}: {err}")
+            log.warning("Couldn't poll @%s: %s", handle, str(err)[:200])
+    if errors and new == 0 and len(errors) == len(handles):
+        raise MonitorError("\n".join(errors))  # all creators failed: surface it on the dashboard
+    return new
+
+
+def poll_creator(cfg: dict, handle: str) -> int:
+    """One creator. The first poll for a handle records when watching started; any post from
+    BEFORE that moment is backlog (SKIPPED), however it turns up later."""
+    videos = list_latest(cfg, handle)
     seeds = db.kv_get("seeded_at", {}) or {}
     watching_since = seeds.get(handle.lower())
     if watching_since is None:
@@ -140,9 +154,9 @@ def poll_once(cfg: dict = None) -> int:
     for video in videos:
         is_new = video_time(video["id"]) >= watching_since
         state = "DETECTED" if is_new else "SKIPPED"
-        if db.insert_if_new(video["id"], video["url"], state=state, source="monitor") and is_new:
+        if db.insert_if_new(video["id"], video["url"], state=state, source="monitor", handle=handle) and is_new:
             new += 1
-            log.info("New post detected: %s", video["url"])
+            log.info("New post from @%s: %s", handle, video["url"])
     return new
 
 
@@ -185,8 +199,9 @@ class Monitor(threading.Thread):
     def _tick(self) -> float:
         """One poll. Returns how long to wait before the next one."""
         cfg = config.load()
-        if not cfg["monitor"]["enabled"] or not cfg["creator"]["handle"]:
-            self._status(ok=False, message="Monitor off: set creator.handle in config.yaml",
+        watching = [c for c in cfg.get("creators") or [] if c.get("enabled", True) and c["handle"]]
+        if not cfg["monitor"]["enabled"] or not watching:
+            self._status(ok=False, message="Monitor off: add a creator to watch on the dashboard",
                          next_poll=None)
             return 60
 

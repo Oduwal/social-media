@@ -59,6 +59,7 @@ NEW_COLUMNS = {
     "edit": "TEXT",
     "target": "TEXT",  # which person to make albino when a clip shows several people
     "sound": "TEXT",   # trending TikTok sound: Gemini's suggestions + the user's choice
+    "handle": "TEXT",  # which creator this video (and its clips) came from
 }
 
 _SCHEMA = """
@@ -130,14 +131,15 @@ def _row_to_job(row) -> dict:
     return job
 
 
-def insert_if_new(video_id: str, url: str, state: str = "DETECTED", source: str = "monitor") -> bool:
+def insert_if_new(video_id: str, url: str, state: str = "DETECTED", source: str = "monitor",
+                  handle: str = "") -> bool:
     """Returns True if the job was created, False if the video was already known."""
     now = time.time()
     with _lock:
         cur = _db().execute(
-            "INSERT OR IGNORE INTO jobs (video_id, url, source, state, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (video_id, url, source, state, now, now),
+            "INSERT OR IGNORE INTO jobs (video_id, url, source, state, handle, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (video_id, url, source, state, handle, now, now),
         )
         _db().commit()
         return cur.rowcount == 1
@@ -149,13 +151,24 @@ def insert_clip(clip_id: str, parent: dict, clip: dict, **fields) -> bool:
     now = time.time()
     row = _encode({"video_id": clip_id, "url": parent["url"], "source": parent["source"],
                    "state": "NEW", "kind": "clip", "parent_id": parent["video_id"], "clip": clip,
-                   "created_at": now, **fields})
+                   "handle": parent.get("handle", ""), "created_at": now, **fields})
     cols = ", ".join(row)
     with _lock:
         cur = _db().execute(f"INSERT OR IGNORE INTO jobs ({cols}) VALUES ({', '.join('?' for _ in row)})",
                             tuple(row.values()))
         _db().commit()
         return cur.rowcount == 1
+
+
+def auto_pick_previews() -> int:
+    """Move every clip waiting in PREVIEW to CUT as-is (transform_mode 'original'), so it
+    flows on to READY without a manual pick. Returns how many were moved."""
+    with _lock:
+        cur = _db().execute(
+            "UPDATE jobs SET state = 'CUT', transform_mode = 'original', updated_at = ? "
+            "WHERE kind = 'clip' AND state = 'PREVIEW' AND hold = 0", (time.time(),))
+        _db().commit()
+        return cur.rowcount
 
 
 def get(video_id: str) -> dict:

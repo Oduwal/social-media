@@ -38,11 +38,12 @@ def clear_from(video_id: str, step: str) -> None:
                 path.unlink()
 
 
-def build_captions(clip: dict, cfg: dict) -> dict:
+def build_captions(clip: dict, cfg: dict, creator: dict = None) -> dict:
     """Default captions for one clip: Gemini's caption + the creator credit + hashtags."""
-    credit = cfg["creator"]["credit"]
+    creator = creator or cfg["creator"]
+    credit = creator["credit"]
     tags = []
-    for tag in list(cfg["creator"]["hashtags"]) + list(clip.get("hashtags") or []):
+    for tag in list(creator["hashtags"]) + list(clip.get("hashtags") or []):
         tag = "#" + tag.lstrip("#").strip()
         if len(tag) > 1 and tag.lower() not in {t.lower() for t in tags}:
             tags.append(tag)
@@ -79,6 +80,10 @@ def run_step(job: dict, step: str, cfg: dict) -> None:
                                cfg["clip"]["min_seconds"], cfg["clip"]["max_seconds"])
         cutter.thumbnail(job_dir / "highlight.mp4", job_dir / "thumb.jpg")
         db.update(vid, cut_range=cut_range)
+        if cfg.get("pipeline", {}).get("auto_finish", False):
+            # no manual pick: send every clip straight through to READY, as-is (no transform)
+            db.update(vid, transform_mode="original")
+            return "CUT"
 
     elif step == "transform":
         if job.get("transform_mode") == "original":  # user chose "use as is"
@@ -118,13 +123,14 @@ def make_clips(video: dict, cfg: dict) -> None:
     from the terminal doesn't have its clips picked up by the dashboard's worker."""
     hl = highlight.pick(config.job_dir(video["video_id"]) / "source.mp4",
                         config.job_dir(video["video_id"]), cfg)
+    creator = config.creator_for(cfg, video.get("handle"))
     for number, clip in enumerate(hl["clips"], start=1):
         db.insert_clip(
             f"{video['video_id']}-{number:02d}", video, clip,
             hold=video.get("hold", False),
             info={"title": clip.get("title") or f"Highlight {number}",
                   "video_title": (video.get("info") or {}).get("title", "")},
-            captions=build_captions(clip, cfg),
+            captions=build_captions(clip, cfg, creator),
             # several people: pre-fill who to change with Gemini's description of the creator
             target=transform_adapter.clean_target(clip.get("creator_description"))
             if (clip.get("people_count") or 0) > 1 else "",
@@ -447,6 +453,12 @@ class Worker(threading.Thread):
         while not self.stop_event.is_set():
             try:
                 cfg = config.load()
+                # auto_finish: don't wait for a manual pick; send clips waiting in PREVIEW
+                # straight through to READY as-is (also catches clips cut before it was turned on)
+                if cfg.get("pipeline", {}).get("auto_finish", False):
+                    picked = db.auto_pick_previews()
+                    if picked:
+                        log.info("Auto-finishing %d clip(s) waiting in preview", picked)
                 # while the Flow robot can't edit, leave clips waiting for their albino edit alone
                 hold_transforms = (cfg["transform"]["enabled"] and transform_adapter.uses_flow(cfg)
                                    and not flow_robot.can_edit(cfg))

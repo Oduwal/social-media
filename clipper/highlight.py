@@ -7,6 +7,7 @@ request, which both accept.
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -116,13 +117,21 @@ def build_proxy(source: Path, job_dir: Path) -> Path:
                      f"(video is {media.duration(source) / 60:.0f} min); over Gemini's ~15 MB request limit")
 
 
-def pick(source: Path, job_dir: Path, cfg: dict, caption: str = "") -> dict:
-    """Writes job_dir/highlight.json and returns it."""
-    from google.genai import types
-
-    out = job_dir / "highlight.json"
+def pick(source: Path, job_dir: Path, cfg: dict, caption: str = "", out: Path = None) -> dict:
+    """Pick highlights with the configured engine (highlight.engine). Writes highlight.json and
+    returns it. `out` overrides the output path (used to A/B an engine without overwriting)."""
+    out = out or job_dir / "highlight.json"
     if out.exists():
         return json.loads(out.read_text(encoding="utf-8"))
+    engine = cfg.get("highlight", {}).get("engine", "gemini")
+    if engine == "agentrouter":
+        return pick_via_transcript(source, job_dir, cfg, caption, out)
+    return pick_via_gemini(source, job_dir, cfg, caption, out)
+
+
+def pick_via_gemini(source: Path, job_dir: Path, cfg: dict, caption: str, out: Path) -> dict:
+    """Gemini watches the video (a 480p proxy) and returns the highlights."""
+    from google.genai import types
 
     duration = media.duration(source)
     proxy = build_proxy(source, job_dir)
@@ -148,6 +157,7 @@ def pick(source: Path, job_dir: Path, cfg: dict, caption: str = "") -> dict:
     data["clips"] = clean_clips(data["clips"], duration)
     if not data["clips"]:
         raise ValueError("Gemini returned no usable timestamps")
+    data["engine"] = "gemini"
     data["model"] = cfg["gemini"]["model"]
     usage = getattr(resp, "usage_metadata", None)
     if usage is not None:
@@ -156,6 +166,82 @@ def pick(source: Path, job_dir: Path, cfg: dict, caption: str = "") -> dict:
     out.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     log.info("Gemini found %d highlight(s)", len(data["clips"]))
     return data
+
+
+# ------------------------------------------------------------ transcript engine (Agent Router)
+
+TRANSCRIPT_SYSTEM = (
+    "You are a short-form video editor for TikTok, Instagram Reels and X. You are given the "
+    "timestamped transcript of a video (you cannot see the picture, only what is said). Pick the "
+    "moments that would each work as a self-contained short. Reply with ONLY a JSON object.")
+
+TRANSCRIPT_USER = """This is a {minutes}-minute video by @{handle}. Transcript, each line "[start_seconds] words":
+
+{transcript}
+
+Find EVERY self-contained moment that would make its own short, each between {min_s} and {max_s} seconds.
+Each needs a strong hook in the first 2 seconds and a complete thought (never start or end mid-sentence).
+Moments must not overlap; skip filler and dead air. {count_hint}
+Base every timestamp on the transcript's own times. If the whole thing is shorter than {min_s} seconds,
+return it as the single clip. The creator's own caption was: {caption!r}
+
+Reply with ONLY this JSON (no prose, no markdown):
+{{"video_duration_s": <number>, "clips": [{{
+  "title": "<3-8 word label>", "spoken_words": "<exact words in this clip>",
+  "reason": "<why it works as a short>", "hook": "<what grabs attention in the first 2 seconds>",
+  "start_mmss": "<MM:SS>", "end_mmss": "<MM:SS>", "start_s": <number>, "end_s": <number>,
+  "score": <1-10>, "people_count": 1, "creator_description": "",
+  "caption": "<short punchy caption, no hashtags>", "hashtags": ["#up to 5"],
+  "music_mood": "<one of: {moods}>"
+}}]}}"""
+
+
+def transcript_lines(words: list, gap: float = 0.7) -> str:
+    """Group word timings into readable lines, each prefixed with its start time in seconds."""
+    lines, cur = [], []
+    for w in words:
+        if cur and (w["start"] - cur[-1]["end"] > gap or re.search(r"[.!?]$", cur[-1]["text"])):
+            lines.append(cur)
+            cur = []
+        cur.append(w)
+    if cur:
+        lines.append(cur)
+    return "\n".join(f"[{g[0]['start']:.1f}] " + " ".join(x["text"] for x in g) for g in lines)
+
+
+def pick_via_transcript(source: Path, job_dir: Path, cfg: dict, caption: str, out: Path) -> dict:
+    """A Claude/OpenAI model (via Agent Router) reads the transcript and returns the highlights."""
+    from . import agentrouter, captions
+
+    duration = media.duration(source)
+    words = captions.words_for(source, job_dir / "source_transcript.json")
+    if not words:
+        raise ValueError("No speech found to pick highlights from")
+    user = TRANSCRIPT_USER.format(
+        handle=cfg["creator"]["handle"] or "the creator", minutes=max(1, round(duration / 60)),
+        transcript=transcript_lines(words), count_hint=count_hint(duration),
+        min_s=cfg["clip"]["min_seconds"], max_s=cfg["clip"]["max_seconds"],
+        caption=caption[:500], moods=", ".join(MOODS))
+    content = agentrouter.chat_json(cfg, TRANSCRIPT_SYSTEM, user)
+    result = Highlights.model_validate_json(_json_block(content))
+    data = result.model_dump()
+    data["clips"] = clean_clips(data["clips"], duration)
+    if not data["clips"]:
+        raise ValueError("Agent Router returned no usable timestamps")
+    data["engine"] = "agentrouter"
+    data["model"] = cfg["highlight"]["agentrouter"]["model"]
+    out.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    log.info("Agent Router (%s) found %d highlight(s)", data["model"], len(data["clips"]))
+    return data
+
+
+def _json_block(text: str) -> str:
+    """The JSON object from a reply that might be wrapped in prose or ```json fences."""
+    text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?|\n?```$", "", text).strip()
+    start, end = text.find("{"), text.rfind("}")
+    return text[start:end + 1] if start != -1 and end > start else text
 
 
 def clean_clips(clips: list, duration: float) -> list:

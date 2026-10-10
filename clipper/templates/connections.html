@@ -24,6 +24,37 @@
 {% endmacro %}
 
 <section class="card conn">
+  <div class="row between"><h2>Creators to watch</h2>
+    <span class="state {{ 's-posted' if creators|selectattr('enabled')|list else 's-skipped' }}">{{ creators|selectattr('enabled')|list|length }} active</span></div>
+  <p class="small">Clipper checks each of these TikTok creators for new posts and clips them. Add as many as you like.</p>
+  {% if creators %}
+  <table class="small" style="width:100%; border-collapse:collapse">
+    <tr style="text-align:left"><th>Handle</th><th>Credit</th><th>Hashtags</th><th></th><th></th></tr>
+    {% for c in creators %}
+    <tr style="border-top:1px solid #0002">
+      <td><b>@{{ c.handle }}</b></td>
+      <td>{{ c.credit }}</td>
+      <td>{{ c.hashtags|join(' ') }}</td>
+      <td><form method="post" action="/connections/creators/toggle">
+        <input type="hidden" name="handle" value="{{ c.handle }}">
+        <input type="hidden" name="enabled" value="{{ 'off' if c.enabled else 'on' }}">
+        <button class="btn small">{{ 'Pause' if c.enabled else 'Resume' }}</button></form></td>
+      <td><form method="post" action="/connections/creators/remove" onsubmit="return confirm('Stop watching @{{ c.handle }}?')">
+        <input type="hidden" name="handle" value="{{ c.handle }}">
+        <button class="btn small danger">Remove</button></form></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}<p class="small muted">No creators yet — add one below.</p>{% endif %}
+  <form method="post" action="/connections/creators/add" class="row" style="flex-wrap:wrap; gap:6px; margin-top:8px">
+    <input name="handle" placeholder="@handle" required>
+    <input name="credit" placeholder="credit (optional, e.g. 🎥 @name)">
+    <input name="hashtags" placeholder="#hashtags (optional)">
+    <button class="btn small primary">Add creator</button>
+  </form>
+</section>
+
+<section class="card conn">
   <div class="row between"><h2>Google Flow robot (albino edits)</h2>
     {% if flow.needs_you %}<span class="state s-failed">needs you</span>
     {% elif flow.paused_until %}<span class="state s-failed">paused</span>
@@ -52,22 +83,45 @@
 
 <section class="card conn">
   <div class="row between"><h2>Google Gemini (finding highlights)</h2>
+    {% if agentrouter.engine == "gemini" %}<span class="state s-posted">in use</span>{% endif %}
     {% if gemini|selectattr("ready")|list %}<span class="state s-posted">ready</span>{% else %}<span class="state s-skipped">key needed</span>{% endif %}</div>
-  <p class="small">Clipper tries these in order and moves to the next when one has no credit or quota left:</p>
+  <p class="small">{% if agentrouter.engine == "gemini" %}<b>Finding highlights by watching the video.</b> {% else %}Not in use (highlight.engine is "{{ agentrouter.engine }}"). {% endif %}Clipper tries these in order and moves to the next when one has no credit or quota left:</p>
   <ul class="small">
   {% for g in gemini %}
-    <li><b>{{ "Vertex AI (your Cloud project)" if g.name == "vertex" else "Free Gemini API key" }}</b>:
-      {% if not g.ready %}not set up{% elif g.skipped_until %}<span class="bad-text">resting after: {{ g.reason[:160] }}</span>{% else %}<span class="ok-text">ready</span>{% endif %}</li>
+    <li><b>{{ g.label }}</b>:
+      {% if not g.ready %}not set up{% elif g.skipped_until %}<span class="bad-text">resting until {{ g.skipped_until|int|clock }}: {{ g.reason[:140] }}</span>{% else %}<span class="ok-text">ready</span>{% endif %}</li>
   {% endfor %}
   </ul>
+  <form method="post" action="/connections/gemini/vertex" class="row">
+    {% if use_vertex %}<button class="btn small danger">Turn Vertex off (use the free key only)</button>
+    {% else %}<button class="btn small">Turn Vertex back on</button>
+    <span class="small muted">Off now: only the free key is used. Turn on once you enable Cloud billing.</span>{% endif %}
+  </form>
   <details{% if not saved.GEMINI_API_KEY %} open{% endif %}><summary class="small"><b>Get a free key (2 minutes)</b></summary>
     <ol class="small steps">
       <li>Go to <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey ↗</a> and click <b>Create API key</b>.</li>
       <li>Pick a project with <b>no billing</b> linked (or let it make a new one). A project whose prepaid credit ran out stays blocked; it doesn't drop back to free.</li>
       <li>Paste the key below. On the free tier Google may use the clips you send to improve its products, and web search for trending sounds isn't included.</li>
+      <li>You can paste <b>several keys</b> (from different accounts), separated by commas. When one hits its daily limit, Clipper rotates to the next.</li>
     </ol></details>
   <form method="post" action="/connections/keys" class="keys">
-    {{ keyfield("GEMINI_API_KEY", "Gemini API key") }}<button class="btn small">Save key</button></form>
+    {{ keyfield("GEMINI_API_KEY", "Gemini API key(s), comma-separated") }}<button class="btn small">Save key(s)</button></form>
+</section>
+
+<section class="card conn">
+  <div class="row between"><h2>Agent Router (finding highlights)</h2>
+    {% if agentrouter.engine == "agentrouter" %}<span class="state s-posted">in use</span>{% endif %}
+    {% if agentrouter.ready %}<span class="state s-posted">ready</span>{% else %}<span class="state s-skipped">setup needed</span>{% endif %}</div>
+  <p class="small">An alternative to Gemini: a Claude or OpenAI model (via the <b>Agent Router</b> gateway) reads a
+    <b>transcript</b> of the video and picks the highlights, instead of watching it. Good for talking clips, and
+    it uses your Agent Router key instead of Gemini.
+    {% if agentrouter.engine == "agentrouter" %} <b>Currently in use.</b>{% else %} Set <code>highlight: engine: "agentrouter"</code> in config.yaml to switch to it.{% endif %}</p>
+  <ul class="small">
+    <li>Base URL: <code>{{ agentrouter.base_url or "set highlight.agentrouter.base_url" }}</code></li>
+    <li>Model: <code>{{ agentrouter.model or "set highlight.agentrouter.model" }}</code></li>
+  </ul>
+  <form method="post" action="/connections/keys" class="keys">
+    {{ keyfield("AGENTROUTER_API_KEY", "Agent Router API key") }}<button class="btn small">Save key</button></form>
 </section>
 
 <section class="card conn">

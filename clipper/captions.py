@@ -8,6 +8,7 @@ trip the recogniser, so captions are meant to be checked and fixed in the editor
 
 import json
 import logging
+import math
 import re
 import shutil
 import tempfile
@@ -29,8 +30,13 @@ class CaptionError(RuntimeError):
 
 def transcribe(job_dir: Path) -> list:
     """[{"text", "start", "end"}, ...] for every spoken word of transformed.mp4 (cached)."""
-    video = job_dir / "transformed.mp4"
-    cache = job_dir / TRANSCRIPT
+    return words_for(job_dir / "transformed.mp4", job_dir / TRANSCRIPT)
+
+
+def words_for(video: Path, cache: Path) -> list:
+    """Transcribe any video to word-level timings [{"text", "start", "end"}, ...], cached next to
+    it and reused until the video changes. Used for captions (transformed.mp4) and for picking
+    highlights from a transcript (source.mp4)."""
     stamp = video.stat().st_mtime
     if cache.exists():
         saved = json.loads(cache.read_text(encoding="utf-8"))
@@ -42,22 +48,47 @@ def transcribe(job_dir: Path) -> list:
     try:
         audio = work / "audio.wav"
         media.run(["ffmpeg", "-y", "-loglevel", "error", "-i", video, "-vn", "-ac", "1", "-ar", "16000", audio])
-        result = _transcribe(audio, work)
-        if not result.get("ok") and result.get("reason") == "whisper_unavailable":
-            # first time: fetch the speech model (about 600 MB, a few minutes, once per PC)
-            log.info("Installing HyperFrames' speech model (Parakeet), once")
-            studio._run(["models", "install", "parakeet", "--json"], timeout=1800)
-            result = _transcribe(audio, work)
-        if not result.get("ok"):
-            raise CaptionError(f"Speech-to-text didn't work: {result.get('reason') or result}")
-        raw = json.loads(Path(result["transcriptPath"]).read_text(encoding="utf-8"))
+        words = _transcribe_all(audio, media.duration(audio), work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
-    words = [{"text": str(w["text"]).strip(), "start": round(float(w["start"]), 3),
-              "end": round(float(w["end"]), 3)}
-             for w in (raw if isinstance(raw, list) else raw.get("words", [])) if str(w.get("text", "")).strip()]
     cache.write_text(json.dumps({"source_mtime": stamp, "words": words}, ensure_ascii=False), encoding="utf-8")
     return words
+
+
+# HyperFrames sets a Node timeout of duration x 2000 ms, which it rejects when it isn't a whole
+# number (a non-integer duration) or is very large (a long video). So transcribe in chunks, each
+# padded to a whole number of seconds, and stitch the word times back together.
+CHUNK_S = 480
+
+
+def _transcribe_all(audio: Path, total: float, work: Path) -> list:
+    words, offset, index, installed = [], 0.0, 0, False
+    while offset < max(total, 0.1):
+        length = min(CHUNK_S, math.ceil(total - offset)) or 1
+        seg = work / f"seg_{index}.wav"
+        media.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{offset:.3f}", "-i", audio,
+                   "-t", str(length), "-af", "apad", "-ac", "1", "-ar", "16000", seg])  # exactly `length` s
+        words += _chunk_words(seg, offset, work / f"c{index}", install=not installed)
+        installed = True
+        offset += CHUNK_S
+        index += 1
+    return words
+
+
+def _chunk_words(audio: Path, offset: float, work: Path, install: bool) -> list:
+    work.mkdir(parents=True, exist_ok=True)
+    result = _transcribe(audio, work)
+    if install and not result.get("ok") and result.get("reason") == "whisper_unavailable":
+        # first time: fetch the speech model (about 600 MB, a few minutes, once per PC)
+        log.info("Installing HyperFrames' speech model (Parakeet), once")
+        studio._run(["models", "install", "parakeet", "--json"], timeout=1800)
+        result = _transcribe(audio, work)
+    if not result.get("ok"):
+        raise CaptionError(f"Speech-to-text didn't work: {result.get('error') or result.get('reason') or result}")
+    raw = json.loads(Path(result["transcriptPath"]).read_text(encoding="utf-8"))
+    return [{"text": str(w["text"]).strip(), "start": round(float(w["start"]) + offset, 3),
+             "end": round(float(w["end"]) + offset, 3)}
+            for w in (raw if isinstance(raw, list) else raw.get("words", [])) if str(w.get("text", "")).strip()]
 
 
 def _transcribe(audio: Path, work: Path) -> dict:
