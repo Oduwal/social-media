@@ -279,3 +279,16 @@ def test_ai_helper_answer_is_checked_like_any_save(tmp_path, monkeypatch):
     out = editor2.assist(p, "Make it black and white", tmp_path, config.load())
     assert out["look"]["filter"] == "bw" and "evil" not in out["assets"]
     assert any(it.get("text") == "AI title" for t in out["tracks"] for it in t["items"])
+
+
+def test_text_opacity_and_translucent_box():
+    it = P._clean_item("text", {"id": "t", "text": "Hi", "start": 0, "dur": 2, "box": True,
+                                "box_color": "#000000", "box_opacity": 0.4, "opacity": 0.5}, {}, set())
+    assert it["box_opacity"] == 0.4 and it["opacity"] == 0.5       # both kept by clean
+    # the box fill carries the alpha (0.4 opaque -> &H99), and opaque is the default
+    assert render2._text_style(0, it).split(",")[5] == "&H99000000"
+    opaque = P._clean_item("text", {"id": "t2", "text": "Hi", "start": 0, "dur": 2, "box": True,
+                                    "box_color": "#FFFFFF"}, {}, set())
+    assert opaque["box_opacity"] == 1.0 and render2._text_style(0, opaque).split(",")[5] == "&H00FFFFFF"
+    # text opacity is applied in the event body (the whole title goes translucent)
+    assert "alpha" in "\n".join(render2.text_events(0, it)).lower()

@@ -17,7 +17,7 @@ def _t(**kw) -> dict:
     base = {"font": "Poppins Black", "size": 90, "color": "#FFFFFF", "outline": 6, "outline_color": "#000000",
             "shadow": 2, "box": False, "box_color": "#000000", "uppercase": False, "align": "center",
             "effect": "none", "accent": "#FFE600", "anim_in": "pop", "anim_out": "none", "x": C, "y": 420,
-            "rotation": 0, "opacity": 1, "kf": {}}
+            "rotation": 0, "opacity": 1, "box_opacity": 1, "kf": {}}
     base.update(kw)
     return base
 

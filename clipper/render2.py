@@ -102,7 +102,8 @@ def _text_style(i: int, it: dict) -> str:
     family, bold, _ = P.FONTS[it["font"]]
     align = {"center": 5, "left": 4, "right": 6}[it["align"]]
     if it["box"]:
-        border, outline, outline_color = 3, max(8, it["size"] // 6), _ass_color(it["box_color"])
+        box_alpha = int(round(255 * (1 - max(0.0, min(1.0, it.get("box_opacity", 1))))))
+        border, outline, outline_color = 3, max(8, it["size"] // 6), _ass_color(it["box_color"], box_alpha)
     else:
         border, outline, outline_color = 1, it["outline"], _ass_color(it["outline_color"])
     return (f"Style: T{i},{family},{it['size']},{_ass_color(it['color'])},&H000000FF,{outline_color},"

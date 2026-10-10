@@ -427,6 +427,7 @@ def _clean_item(kind: str, raw: dict, assets: dict, used: set):
                 "outline_color": _color(raw.get("outline_color"), "#000000"),
                 "shadow": int(_num(raw.get("shadow"), 0, 20, 2)),
                 "box": bool(raw.get("box")), "box_color": _color(raw.get("box_color"), "#000000"),
+                "box_opacity": _num(raw.get("box_opacity"), 0, 1, 1.0),
                 "uppercase": bool(raw.get("uppercase")), "align": _choice(raw.get("align"), ALIGNS, "center"),
                 "effect": _choice(raw.get("effect"), EFFECTS, "none"),
                 "accent": _color(raw.get("accent"), "#FFE600"), "words": clean_words,

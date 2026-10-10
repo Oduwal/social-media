@@ -8,6 +8,10 @@ import {
 const stage = $("#stage"), canvas = $("#canvas");
 const L = { main: $("#l-main"), tfx: $("#l-tfx"), ov: $("#l-ov"), txt: $("#l-txt"), fade: $("#l-fade"), guides: $("#l-guides") };
 const box = $("#selbox");
+function rgba(hex, a) {
+  const n = parseInt((hex || "#000000").slice(1), 16) || 0;
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${Math.max(0, Math.min(1, a ?? 1))})`;
+}
 const media = new Map();     // item id -> element
 const audios = new Map();    // audio item id -> <audio>
 let k = 0.3;                 // canvas -> screen scale
@@ -185,7 +189,7 @@ function drawText(e, it, t) {
   const m = motionAt(it, t);
   const px = it.size * fontScale(it.font);
   const key = [it.text, it.font, it.size, it.color, it.outline, it.outline_color, it.shadow, it.box, it.box_color,
-    it.uppercase, it.align, it.effect, it.accent].join("|");
+    it.box_opacity, it.uppercase, it.align, it.effect, it.accent].join("|");
   if (textCache.get(it.id) !== key) {
     textCache.set(it.id, key);
     Object.assign(e.style, {
@@ -196,8 +200,8 @@ function drawText(e, it, t) {
     const inner = el("span", { class: "tin" });
     if (it.box) {
       const pad = Math.max(8, Math.floor(it.size / 6));
-      Object.assign(inner.style, { background: it.box_color, padding: `0 ${pad}px`, boxDecorationBreak: "clone",
-        WebkitBoxDecorationBreak: "clone", WebkitTextStroke: "" });
+      Object.assign(inner.style, { background: rgba(it.box_color, it.box_opacity ?? 1), padding: `0 ${pad}px`,
+        boxDecorationBreak: "clone", WebkitBoxDecorationBreak: "clone", WebkitTextStroke: "" });
     } else if (it.outline) {
       Object.assign(inner.style, { WebkitTextStroke: `${it.outline * 2}px ${it.outline_color}`, paintOrder: "stroke fill" });
     }
