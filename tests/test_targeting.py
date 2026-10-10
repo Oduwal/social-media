@@ -166,6 +166,10 @@ def client(fresh_db, tmp_path, monkeypatch):
     monkeypatch.setattr(config, "JOBS_DIR", tmp_path / "jobs")
     monkeypatch.setattr(config, "MUSIC_DIR", tmp_path / "music")
     (tmp_path / "music").mkdir()
+    # these tests cover the albino "who to make albino" targeting UI, which only shows with the
+    # transform on (it's hidden now that the albino edit is off by default)
+    real_load = config.load
+    monkeypatch.setattr(config, "load", lambda: config._merge(real_load(), {"transform": {"enabled": True}}))
     return TestClient(webapp.app)
 
 
