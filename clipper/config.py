@@ -34,9 +34,9 @@ DEFAULTS = {
     "flow": {"chrome_path": "", "debug_port": 9333, "project_url": "", "min_gap_s": 60, "max_gap_s": 180,
              "clip_gap_s": 20, "piece_gap_s": 3,
              "daily_max_edits": 15, "cooldown_minutes": 60, "timeout_minutes": 12, "upload_timeout_minutes": 6},
-    # auto_finish: send every cut clip straight through to READY (no manual pick in PREVIEW,
-    # no albino transform). Turn off to review and pick clips one by one.
-    "pipeline": {"auto_finish": True},
+    # auto_finish: on = send every cut clip straight through to READY (no manual pick);
+    # off (default) = clips wait in review (PREVIEW) for you to pick which to keep.
+    "pipeline": {"auto_finish": False},
     "music": {"default_volume": 0.18, "ducking": True},
     "upload_post": {"profile": "", "platforms": ["tiktok", "instagram", "x"],
                     "tiktok_privacy_level": "SELF_ONLY", "ai_label": True},

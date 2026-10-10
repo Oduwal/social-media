@@ -47,9 +47,10 @@ highlight:
     base_url: "https://agentrouter.org/v1"
     model: "claude-sonnet-4-5-20250929"
 
-# Scrapping the albino edit: clips go straight to READY as-is (see pipeline.auto_finish).
+# Albino edit scrapped. auto_finish off: new clips wait in the review step so you pick which
+# ones to keep yourself (clips already pushed to READY stay there).
 pipeline:
-  auto_finish: true          # every clip auto-processed to READY; set false to pick clips yourself
+  auto_finish: false         # true = auto-process every clip to READY; false = you pick in review
 
 transform:
   enabled: false             # was the albino edit; off now

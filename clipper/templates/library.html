@@ -15,8 +15,8 @@
 </div>
 
 {% if tab == "preview" %}
-<p class="muted small">These are cut but not transformed yet, so they cost nothing. Hover to play. Pick the ones worth making albino:
-  each costs about one Omni edit per 10 seconds.</p>
+<p class="muted small">Newly cut clips, waiting for you to choose. Hover to play, then tick the ones you want and press
+  {% if cfg.transform.enabled %}Make albino or Use as is{% else %}Use these{% endif %} — they move on to be finished and wait in Ready for your approval.</p>
 {% elif tab == "ready" %}
 <p class="muted small">Transformed and mixed. Open one to change the music and caption, then post it.</p>
 {% endif %}

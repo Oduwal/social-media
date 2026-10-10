@@ -7,8 +7,12 @@
     <label class="row"><input type="checkbox" id="checkall"> Select all</label>
     <span class="muted small" id="picksummary">Tick the clips you want, then choose what to do with them.</span>
     <span class="grow"></span>
+    {% if cfg.transform.enabled %}
     <button class="btn primary" name="mode" value="albino" onclick="return confirmPick(this)">Make albino</button>
     <button class="btn" name="mode" value="original" title="Skip the transform: add music and post the clip as it is">Use as is</button>
+    {% else %}
+    <button class="btn primary" name="mode" value="original">Use these</button>
+    {% endif %}
     <button class="btn danger" name="mode" value="discard">Discard</button>
   </div>
   {% endif %}
