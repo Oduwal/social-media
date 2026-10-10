@@ -22,9 +22,10 @@
 {% endif %}
 {% if job.state == "PREVIEW" %}
   {% set people = clip.get("people_count") or 0 %}
-  <form method="post" action="/clips/pick" class="banner {{ 'warn' if people > 1 else 'info' }} pickone">
+  <form method="post" action="/clips/pick" class="banner {{ 'warn' if people > 1 and cfg.transform.enabled else 'info' }} pickone">
     <input type="hidden" name="ids" value="{{ job.video_id }}">
     <input type="hidden" name="back" value="/jobs/{{ job.video_id }}">
+    {% if cfg.transform.enabled %}
     <p>This highlight is cut but not transformed. Making it albino costs about <b>{{ job|edits }}</b> Omni edit{{ "s" if (job|edits) != 1 }}.</p>
     <label class="small"><b>Who to make albino</b>
       {% if people > 1 %}<span class="warn-text">· Gemini sees {{ people }} people in this clip: check this describes the right one</span>
@@ -38,6 +39,13 @@
       <button class="btn" name="mode" value="original">Use as is</button>
       <button class="btn danger" name="mode" value="discard">Discard</button>
     </div>
+    {% else %}
+    <p>This clip is cut and ready — keep it to finish for posting, or discard it.</p>
+    <div class="row">
+      <button class="btn primary" name="mode" value="original">Use this clip</button>
+      <button class="btn danger" name="mode" value="discard">Discard</button>
+    </div>
+    {% endif %}
   </form>
 {% elif job.state == "LOOK" %}
   <section class="banner info look">

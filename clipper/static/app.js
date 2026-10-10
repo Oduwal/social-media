@@ -98,9 +98,12 @@ function pickedEdits() {
 function updatePickSummary() {
   if (!summary) return;
   const n = picks.filter((p) => p.checked).length;
-  summary.textContent = n
-    ? `${n} clip${n > 1 ? "s" : ""} picked · making them albino ≈ ${pickedEdits()} Omni edits`
-    : "Tick the clips you want, then choose what to do with them.";
+  summary.textContent = n ? `${n} clip${n > 1 ? "s" : ""} selected` : "Tick clips to use or delete.";
+}
+function confirmDelete() {
+  const n = picks.filter((p) => p.checked).length;
+  if (!n) { alert("Tick at least one clip first."); return false; }
+  return confirm(`Permanently delete ${n} clip${n > 1 ? "s" : ""}? This can't be undone.`);
 }
 picks.forEach((p) => p.addEventListener("change", updatePickSummary));
 const checkall = document.getElementById("checkall");

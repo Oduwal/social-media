@@ -160,6 +160,18 @@ def insert_clip(clip_id: str, parent: dict, clip: dict, **fields) -> bool:
         return cur.rowcount == 1
 
 
+def delete(video_id: str) -> dict:
+    """Remove a job row and return it (so the caller can clean up its files). Only clips
+    are deletable this way; videos keep their history."""
+    with _lock:
+        row = _db().execute("SELECT * FROM jobs WHERE video_id = ? AND kind = 'clip'", (video_id,)).fetchone()
+        if row is None:
+            return {}
+        _db().execute("DELETE FROM jobs WHERE video_id = ?", (video_id,))
+        _db().commit()
+    return _row_to_job(row)
+
+
 def auto_pick_previews() -> int:
     """Move every clip waiting in PREVIEW to CUT as-is (transform_mode 'original'), so it
     flows on to READY without a manual pick. Returns how many were moved."""

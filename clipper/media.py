@@ -24,6 +24,31 @@ def probe(path: Path) -> dict:
     return json.loads(out.stdout)
 
 
+WATERMARK_FONT = Path(__file__).resolve().parent / "static" / "fonts" / "Poppins-Bold.ttf"
+WATERMARK_POS = {
+    "bottom-right": "x=w-tw-h*0.03:y=h-th-h*0.03", "bottom-left": "x=h*0.03:y=h-th-h*0.03",
+    "top-right": "x=w-tw-h*0.03:y=h*0.03", "top-left": "x=h*0.03:y=h*0.03",
+    "bottom-center": "x=(w-tw)/2:y=h-th-h*0.03", "center": "x=(w-tw)/2:y=(h-th)/2",
+}
+
+
+def watermark(src: Path, out: Path, text: str, opacity: float = 0.35, position: str = "bottom-right",
+              size: float = 4.0, font: Path = None) -> Path:
+    """Burn a small translucent text watermark (e.g. @username) onto the video."""
+    text = re.sub(r"[^@A-Za-z0-9._\- ]", "", text or "").strip()[:40]
+    if not text:
+        return src
+    opacity = max(0.05, min(1.0, float(opacity)))
+    fontpath = str(font or WATERMARK_FONT).replace("\\", "/").replace(":", r"\:")  # drawtext/Windows escaping
+    pos = WATERMARK_POS.get(position, WATERMARK_POS["bottom-right"])
+    draw = (f"drawtext=fontfile='{fontpath}':text='{text}':fontcolor=white@{opacity:.2f}:"
+            f"fontsize=h*{float(size) / 100:.4f}:{pos}:"
+            f"shadowcolor=black@{opacity * 0.6:.2f}:shadowx=2:shadowy=2")
+    run(["ffmpeg", "-y", "-loglevel", "error", "-i", src, "-vf", draw,
+         "-c:a", "copy", "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", out])
+    return out
+
+
 def duration(path: Path) -> float:
     return float(probe(path)["format"]["duration"])
 

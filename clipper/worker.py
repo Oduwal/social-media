@@ -318,16 +318,16 @@ def tiktok_video(job: dict, cfg: dict):
         return out
     if source == "studio":  # the same Studio project, minus Clipper's music track
         if not studio.has_music(studio.project_dir(job_dir)):
-            return final
-        return studio.render_project(job_dir, out_name="final_tiktok.mp4", music=False)
+            return final  # identical to final.mp4, already watermarked
+        return apply_watermark(studio.render_project(job_dir, out_name="final_tiktok.mp4", music=False), cfg)
     proj = v2_project(job)
     if proj is not None:  # the timeline editor's project, minus audio marked as music
         if not any(it.get("music") for t in proj["tracks"] if t["kind"] == "audio" for it in t["items"]):
             return final
-        return render2.render(proj, job_dir, out_name="final_tiktok.mp4", music=False)
+        return apply_watermark(render2.render(proj, job_dir, out_name="final_tiktok.mp4", music=False), cfg)
     edit = current_edit(job, cfg)
     edit = {**edit, "music": {**edit["music"], "track": None}}
-    return render.render(edit, job_dir, out_name="final_tiktok.mp4")
+    return apply_watermark(render.render(edit, job_dir, out_name="final_tiktok.mp4"), cfg)
 
 
 def refresh_sound_suggestions(video_id: str, cfg: dict) -> None:
@@ -375,17 +375,31 @@ def render_edit(job: dict, cfg: dict) -> None:
     source = (job.get("info") or {}).get("render_from")
     if source == "shotcut":
         shotcut.render_project(job_dir, cfg)
-        return
-    if source == "studio":
+    elif source == "studio":
         studio.render_project(job_dir)
-        return
-    proj = v2_project(job)
-    if proj is not None:
-        render2.render(proj, job_dir)
-        return
-    edit = current_edit(job, cfg)
-    db.update(vid, edit=edit, music_track=edit["music"]["track"], music_volume=edit["music"]["volume"])
-    render.render(edit, job_dir)
+    elif v2_project(job) is not None:
+        render2.render(v2_project(job), job_dir)
+    else:
+        edit = current_edit(job, cfg)
+        db.update(vid, edit=edit, music_track=edit["music"]["track"], music_volume=edit["music"]["volume"])
+        render.render(edit, job_dir)
+    apply_watermark(job_dir / "final.mp4", cfg)
+
+
+def apply_watermark(path, cfg: dict):
+    """Burn the configured @username watermark onto `path` in place (does nothing if off)."""
+    wm = cfg.get("watermark") or {}
+    if not wm.get("enabled") or not (wm.get("text") or "").strip() or not path.exists():
+        return path
+    tmp = path.with_name(path.stem + ".wm.mp4")
+    try:
+        media.watermark(path, tmp, wm["text"], wm.get("opacity", 0.35),
+                        wm.get("position", "bottom-right"), wm.get("size", 4))
+        tmp.replace(path)
+    except Exception as err:  # noqa: BLE001 - never let a watermark failure lose the clip
+        log.warning("[watermark] couldn't add it to %s: %s", path.name, err)
+        tmp.unlink(missing_ok=True)
+    return path
 
 
 def advance(job: dict, cfg: dict = None) -> str:

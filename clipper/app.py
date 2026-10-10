@@ -266,6 +266,21 @@ async def pick_clips(request: Request):
     return _redirect(str(form.get("back") or "/library"))
 
 
+@app.post("/clips/delete")
+async def delete_clips(request: Request):
+    """Permanently delete the ticked clips (their row and files). Not the Approve/post path."""
+    form = await request.form()
+    ids = [i for i in form.getlist("ids") if JOB_ID.match(i)]
+    removed = 0
+    for clip_id in ids:
+        if db.delete(clip_id).get("video_id"):
+            removed += 1
+            folder = (config.JOBS_DIR / clip_id).resolve()
+            if config.JOBS_DIR.resolve() in folder.parents:
+                shutil.rmtree(folder, ignore_errors=True)
+    return _redirect(str(form.get("back") or "/library"))
+
+
 def via_upload_post(cfg: dict) -> bool:
     return cfg["posting"]["service"] == "upload_post"
 
@@ -859,6 +874,7 @@ def connections(request: Request, msg: str = "", error: str = ""):
         "flow": flow_robot.status(cfg),
         "use_vertex": "vertex" in cfg["gemini"]["backends"],
         "creators": cfg["creators"],
+        "watermark": cfg["watermark"],
     })
 
 
@@ -887,6 +903,18 @@ def gemini_vertex():
     hooks["wake_worker"]()
     return _to_connections(msg="Vertex is ON — Clipper will try your Cloud project first." if not on_now
                            else "Vertex is OFF — Clipper uses only your free Gemini key(s).")
+
+
+@app.post("/connections/watermark")
+async def save_watermark(request: Request):
+    """Save the @username watermark (text + on/off) from the Connections card."""
+    form = await request.form()
+    text = str(form.get("text") or "").strip()[:40]
+    config.ui_set(watermark={"enabled": bool(form.get("enabled")) and bool(text), "text": text,
+                             "position": str(form.get("position") or "bottom-right")})
+    hooks["wake_worker"]()
+    return _to_connections(msg=f"Watermark {'on' if text and form.get('enabled') else 'saved (off)'}: "
+                               f"{text or 'no text yet'}. New clips get it; re-render older ones to add it.")
 
 
 @app.post("/connections/creators/add")

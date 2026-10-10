@@ -55,6 +55,23 @@
 </section>
 
 <section class="card conn">
+  <div class="row between"><h2>Watermark</h2>
+    <span class="state {{ 's-posted' if watermark.enabled and watermark.text else 's-skipped' }}">{{ 'on' if watermark.enabled and watermark.text else 'off' }}</span></div>
+  <p class="small">A small translucent watermark burned onto every clip before posting. New clips get it automatically;
+    re-render an older clip (in the editor) to add it.</p>
+  <form method="post" action="/connections/watermark" class="row" style="flex-wrap:wrap; gap:8px; align-items:center">
+    <input name="text" value="{{ watermark.text }}" placeholder="@myusername" style="min-width:180px">
+    <label class="small">Position
+      <select name="position">
+        {% for p in ["bottom-right","bottom-left","bottom-center","top-right","top-left","center"] %}
+        <option value="{{ p }}" {{ 'selected' if watermark.position == p }}>{{ p }}</option>{% endfor %}
+      </select></label>
+    <label class="small row"><input type="checkbox" name="enabled" {{ 'checked' if watermark.enabled }}> Show it</label>
+    <button class="btn small primary">Save watermark</button>
+  </form>
+</section>
+
+<section class="card conn">
   <div class="row between"><h2>Google Flow robot (albino edits)</h2>
     {% if flow.needs_you %}<span class="state s-failed">needs you</span>
     {% elif flow.paused_until %}<span class="state s-failed">paused</span>

@@ -57,12 +57,14 @@ def test_library_video_and_clip_pages_render(client, fresh_db):
     a = _clip(fresh_db, 1)
     _clip(fresh_db, 2, state="READY")
     lib = client.get("/library")
-    assert lib.status_code == 200 and "Clip 1" in lib.text and "Make albino" in lib.text
+    # albino scrapped: the review step offers "Use these" / Delete, not "Make albino"
+    assert lib.status_code == 200 and "Clip 1" in lib.text and "Use these" in lib.text
+    assert "Make albino" not in lib.text and "Delete selected" in lib.text
     assert "Clip 2" not in lib.text  # READY isn't in the "to review" tab
     assert "Clip 2" in client.get("/library?tab=ready").text
     assert "Clip 1" in client.get(f"/jobs/{VIDEO}").text
     page = client.get(f"/jobs/{a}")
-    assert page.status_code == 200 and "Make albino" in page.text and "about <b>2</b> Omni edits" in page.text
+    assert page.status_code == 200 and "Use this clip" in page.text and "Make albino" not in page.text
     assert client.get(f"/media/{a}/highlight.mp4").status_code == 200
     assert client.get(f"/media/{a}/../../secret").status_code == 404
 

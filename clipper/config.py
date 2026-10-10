@@ -37,6 +37,8 @@ DEFAULTS = {
     # auto_finish: on = send every cut clip straight through to READY (no manual pick);
     # off (default) = clips wait in review (PREVIEW) for you to pick which to keep.
     "pipeline": {"auto_finish": False},
+    # Translucent text watermark burned onto the posted video (e.g. your @username).
+    "watermark": {"enabled": False, "text": "", "opacity": 0.35, "position": "bottom-right", "size": 4},
     "music": {"default_volume": 0.18, "ducking": True},
     "upload_post": {"profile": "", "platforms": ["tiktok", "instagram", "x"],
                     "tiktok_privacy_level": "SELF_ONLY", "ai_label": True},
@@ -98,6 +100,8 @@ def load() -> dict:
     ui = ui_get()
     if "use_vertex" in ui:  # the Vertex on/off button
         cfg["gemini"]["backends"] = ["vertex", "aistudio"] if ui["use_vertex"] else ["aistudio"]
+    if isinstance(ui.get("watermark"), dict):  # the watermark card
+        cfg["watermark"] = {**cfg["watermark"], **ui["watermark"]}
 
     # The creators being watched: the dashboard's list wins; otherwise config.yaml's
     # 'creators:' list, otherwise the single 'creator:' (so old configs keep working).

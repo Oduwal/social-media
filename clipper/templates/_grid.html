@@ -2,18 +2,21 @@
 {% set pickable = clips | selectattr("state", "equalto", "PREVIEW") | list %}
 <form method="post" action="/clips/pick" id="pickform">
   <input type="hidden" name="back" value="{{ back }}">
-  {% if pickable %}
+  {% if clips %}
   <div class="pickbar card">
     <label class="row"><input type="checkbox" id="checkall"> Select all</label>
-    <span class="muted small" id="picksummary">Tick the clips you want, then choose what to do with them.</span>
+    <span class="muted small" id="picksummary">Tick clips to use or delete.</span>
     <span class="grow"></span>
-    {% if cfg.transform.enabled %}
-    <button class="btn primary" name="mode" value="albino" onclick="return confirmPick(this)">Make albino</button>
-    <button class="btn" name="mode" value="original" title="Skip the transform: add music and post the clip as it is">Use as is</button>
-    {% else %}
-    <button class="btn primary" name="mode" value="original">Use these</button>
+    {% if pickable %}
+      {% if cfg.transform.enabled %}
+      <button class="btn primary" name="mode" value="albino" onclick="return confirmPick(this)">Make albino</button>
+      <button class="btn" name="mode" value="original" title="Skip the transform: add music and post the clip as it is">Use as is</button>
+      {% else %}
+      <button class="btn primary" name="mode" value="original">Use these</button>
+      {% endif %}
+      <button class="btn" name="mode" value="discard">Discard</button>
     {% endif %}
-    <button class="btn danger" name="mode" value="discard">Discard</button>
+    <button class="btn danger" formaction="/clips/delete" onclick="return confirmDelete()">Delete selected</button>
   </div>
   {% endif %}
 
@@ -33,7 +36,7 @@
       {% endif %}
       <div class="cardbody">
         <div class="row between">
-          {% if c.state == "PREVIEW" %}<label class="row"><input type="checkbox" name="ids" value="{{ c.video_id }}" class="pick" data-edits="{{ c|edits }}"> <b class="small">Pick</b></label>{% endif %}
+          {% if c.state != "NEW" %}<label class="row"><input type="checkbox" name="ids" value="{{ c.video_id }}" class="pick"> <b class="small">Select</b></label>{% endif %}
           <span class="state s-{{ c.state|lower }}">{{ c.state }}</span>
           <span class="muted small">{{ (c.clip or {}).get("score", "?") }}/10</span>
         </div>
