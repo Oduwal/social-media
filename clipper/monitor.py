@@ -24,6 +24,7 @@ log = logging.getLogger(__name__)
 APIFY_ACTOR = "clockworks~tiktok-profile-scraper"
 BACKOFF_MINUTES = [30, 60, 120]
 UPDATE_EVERY_S = 24 * 3600
+CATCHUP_DEPTH = 60  # posts scanned on the first poll after the monitor has been offline
 
 
 class MonitorError(RuntimeError):
@@ -77,6 +78,9 @@ def list_latest(cfg: dict = None, handle: str = None) -> list:
     if not handle:
         raise MonitorError("Set a creator to watch (config.yaml or the dashboard)")
     limit = int(cfg["monitor"]["playlist_end"])
+    last_ok = (db.kv_get("monitor_status", {}) or {}).get("last_ok")
+    if last_ok and time.time() - last_ok > 3 * cfg["monitor"]["interval_minutes"] * 60:
+        limit = max(limit, CATCHUP_DEPTH)  # PC was off a while: look further back so nothing is missed
     sec_uid = db.kv_get(sec_uid_key(handle))
     errors = []
 

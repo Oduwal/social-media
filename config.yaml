@@ -84,7 +84,7 @@ music:
 
 posting:
   service: "direct"           # "direct" = Clipper posts itself (Connections page); "upload_post" = via Upload-Post
-  tiktok_mode: "inbox"        # "inbox" = sent to your TikTok inbox as a draft (you add a sound and post in the app)
+  tiktok_mode: "direct"       # "inbox" = sent to your TikTok inbox as a draft (you add a sound and post in the app)
                               # "direct" = posted automatically (private-only until TikTok audits your app)
   graph_api_version: "v24.0"  # Meta Graph API version for Instagram
 

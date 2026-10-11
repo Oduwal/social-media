@@ -108,9 +108,30 @@ def test_clip_page_and_approve(client, fresh_db):
     assert client.get("/music/beat.mp3").status_code == 200
 
     client.post(f"/jobs/{a}/approve", data={"platform_tiktok": "on", "platform_x": "on", "caption_tiktok": "T",
-                                            "caption_instagram": "I", "caption_x": "X", "ai_label": "on"})
+                                            "caption_instagram": "I", "caption_x": "X", "ai_label": "on",
+                                            "tiktok_privacy": "SELF_ONLY", "tiktok_consent": "on"})
     job = fresh_db.get(a)
     assert job["state"] == "APPROVED" and job["platforms"] == ["tiktok", "x"] and job["captions"]["x"] == "X"
+    assert job["tiktok_opts"]["privacy"] == "SELF_ONLY" and job["tiktok_opts"]["comment"] is False
+
+
+def test_tiktok_choices_are_required_for_direct_posting():
+    from fastapi import HTTPException
+    from clipper import app as app_module
+    check = app_module._check_tiktok_opts
+    ok = app_module._tiktok_opts({"tiktok_privacy": "SELF_ONLY", "tiktok_consent": "on"})
+    check(ok, {})
+    for form in ({"tiktok_consent": "on"},                                     # no privacy chosen
+                 {"tiktok_privacy": "SELF_ONLY"},                              # no consent
+                 {"tiktok_privacy": "SELF_ONLY", "tiktok_consent": "on", "tiktok_commercial": "on"},
+                 {"tiktok_privacy": "SELF_ONLY", "tiktok_consent": "on", "tiktok_commercial": "on",
+                  "tiktok_branded": "on"}):                                    # branded can't be private
+        try:
+            check(app_module._tiktok_opts(form), {})
+        except HTTPException as err:
+            assert err.status_code == 400
+        else:
+            raise AssertionError(f"accepted {form}")
 
 
 def test_approve_validation(client, fresh_db):

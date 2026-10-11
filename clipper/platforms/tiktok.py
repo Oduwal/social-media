@@ -150,17 +150,37 @@ def _upload(upload_url: str, video: Path) -> None:
                 raise PostError(f"TikTok upload of part {i + 1}/{count} failed: {resp.status_code} {resp.text[:200]}")
 
 
+def creator_info() -> dict:
+    """The connected account's name, the privacy levels TikTok allows it, and which of
+    comments/duets/stitches it has switched off."""
+    return _api("/post/publish/creator_info/query/", {})
+
+
 def post(job: dict, video: Path, caption: str, ai_label: bool, cfg: dict, on_submitted=None) -> dict:
     size = video.stat().st_size
     chunk, count = chunk_plan(size)
     source = {"source": "FILE_UPLOAD", "video_size": size, "chunk_size": chunk, "total_chunk_count": count}
     if cfg["posting"]["tiktok_mode"] == "direct":
-        options = _api("/post/publish/creator_info/query/", {}).get("privacy_level_options") or ["SELF_ONLY"]
-        wanted = cfg["upload_post"]["tiktok_privacy_level"]
-        privacy = wanted if wanted in options else ("SELF_ONLY" if "SELF_ONLY" in options else options[0])
-        data = _api("/post/publish/video/init/", {"source_info": source, "post_info": {
+        info = creator_info()
+        options = info.get("privacy_level_options") or ["SELF_ONLY"]
+        picked = job.get("tiktok_opts") or {}
+        if picked.get("privacy"):  # chosen on the clip page
+            if picked["privacy"] not in options:
+                raise PostError(f"TikTok doesn't offer '{picked['privacy']}' for this account right now; "
+                                "choose another privacy level on the clip page", definite=True)
+            privacy = picked["privacy"]
+        else:
+            wanted = cfg["upload_post"]["tiktok_privacy_level"]
+            privacy = wanted if wanted in options else ("SELF_ONLY" if "SELF_ONLY" in options else options[0])
+        post_info = {
             "title": caption[:2200], "privacy_level": privacy, "is_aigc": bool(ai_label),
-            "disable_duet": False, "disable_comment": False, "disable_stitch": False}})
+            "disable_comment": not picked.get("comment", False) or bool(info.get("comment_disabled")),
+            "disable_duet": not picked.get("duet", False) or bool(info.get("duet_disabled")),
+            "disable_stitch": not picked.get("stitch", False) or bool(info.get("stitch_disabled"))}
+        if picked.get("commercial"):
+            post_info.update({"brand_content_toggle": bool(picked.get("branded")),
+                              "brand_organic_toggle": bool(picked.get("own_brand"))})
+        data = _api("/post/publish/video/init/", {"source_info": source, "post_info": post_info})
     else:
         data = _api("/post/publish/inbox/video/init/", {"source_info": source})
     publish_id = data["publish_id"]

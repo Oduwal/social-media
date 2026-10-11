@@ -352,6 +352,57 @@
         <textarea name="caption_{{ p }}" id="caption_{{ p }}" rows="{{ 3 if p == 'x' else 5 }}" {% if p == "x" %}maxlength="280"{% endif %}>{{ job.captions.get(p, "") }}</textarea>
       </div>
     {% endfor %}
+    {% set tt = job.tiktok_opts or {} %}
+    {% if (connections or {}).get("tiktok") and connections.tiktok.mode == "direct" %}
+    <fieldset class="card" id="tiktokbox">
+      <legend><b>TikTok post settings</b></legend>
+      <p class="small" id="tt_account">Posting to: <b id="tt_name">loading…</b></p>
+      <p class="small warn-text" id="tt_error" hidden></p>
+      <label class="row">Who can watch this video
+        <select name="tiktok_privacy" id="tt_privacy" data-saved="{{ tt.get('privacy', '') }}">
+          <option value="">— choose —</option>
+        </select></label>
+      <p class="muted small">Until TikTok approves the app, only <b>Only me</b> works; the other choices are refused. Make the post public yourself in TikTok afterwards.</p>
+      <div class="row">
+        <label><input type="checkbox" name="tiktok_comment" id="tt_comment" {% if tt.get("comment") %}checked{% endif %}> Allow comments</label>
+        <label><input type="checkbox" name="tiktok_duet" id="tt_duet" {% if tt.get("duet") %}checked{% endif %}> Allow Duet</label>
+        <label><input type="checkbox" name="tiktok_stitch" id="tt_stitch" {% if tt.get("stitch") %}checked{% endif %}> Allow Stitch</label>
+      </div>
+      <label class="row"><input type="checkbox" name="tiktok_commercial" id="tt_commercial" {% if tt.get("commercial") %}checked{% endif %}> This video promotes a brand, product or service (commercial content)</label>
+      <div class="row" id="tt_brand" {% if not tt.get("commercial") %}hidden{% endif %}>
+        <label><input type="checkbox" name="tiktok_own_brand" {% if tt.get("own_brand") %}checked{% endif %}> Your own brand</label>
+        <label><input type="checkbox" name="tiktok_branded" id="tt_branded" {% if tt.get("branded") %}checked{% endif %}> A third party's brand (paid partnership)</label>
+      </div>
+      <label class="row"><input type="checkbox" name="tiktok_consent" {% if tt.get("consent") %}checked{% endif %}>
+        By posting, I agree to TikTok's <a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noopener">Music Usage Confirmation</a>
+        and I confirm I'm sharing this video to my own account.</label>
+    </fieldset>
+    <script>
+    (function () {
+      var priv = document.getElementById("tt_privacy"), err = document.getElementById("tt_error");
+      var names = {PUBLIC_TO_EVERYONE: "Everyone", MUTUAL_FOLLOW_FRIENDS: "Friends (people you follow back)",
+                   FOLLOWER_OF_CREATOR: "Followers", SELF_ONLY: "Only me"};
+      fetch("/api/tiktok/creator_info").then(function (r) { return r.json(); }).then(function (d) {
+        if (!d.ok) { document.getElementById("tt_name").textContent = "not available";
+                     err.hidden = false; err.textContent = d.message; return; }
+        document.getElementById("tt_name").textContent = d.name || "your TikTok account";
+        d.privacy_options.forEach(function (o) {
+          var opt = document.createElement("option");
+          opt.value = o; opt.textContent = names[o] || o;
+          if (o === priv.dataset.saved) opt.selected = true;
+          priv.appendChild(opt);
+        });
+        [["comment", d.comment_disabled], ["duet", d.duet_disabled], ["stitch", d.stitch_disabled]].forEach(function (x) {
+          if (x[1]) { var box = document.getElementById("tt_" + x[0]); box.checked = false; box.disabled = true;
+                      box.parentNode.title = "Switched off in your TikTok settings"; }
+        });
+      }).catch(function () { err.hidden = false; err.textContent = "Couldn't reach TikTok"; });
+      document.getElementById("tt_commercial").addEventListener("change", function () {
+        document.getElementById("tt_brand").hidden = !this.checked;
+      });
+    })();
+    </script>
+    {% endif %}
     <label class="row"><input type="checkbox" name="ai_label" {% if job.ai_label %}checked{% endif %}> Label as AI-generated</label>
     {% if connections %}<p class="muted small">TikTok gets the label automatically when posted directly; for inbox drafts, switch on
       <b>AI-generated content</b> in TikTok's post settings. Instagram's and X's posting APIs have no label switch: add it in their apps if needed.</p>{% endif %}

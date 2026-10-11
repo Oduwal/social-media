@@ -49,7 +49,7 @@ TERMINAL_STATES = {"CLIPPED", "POSTED", "REJECTED", "SKIPPED", "FAILED"}
 BUSY_STATES = set(NEXT_STEP) | {"POSTING"}
 
 JSON_FIELDS = {"info", "captions", "platforms", "transform_info", "post_result", "cut_range", "clip", "edit",
-               "sound"}
+               "sound", "tiktok_opts"}
 NEW_COLUMNS = {
     "hold": "INTEGER NOT NULL DEFAULT 0",
     "kind": "TEXT NOT NULL DEFAULT 'video'",
@@ -60,6 +60,7 @@ NEW_COLUMNS = {
     "target": "TEXT",  # which person to make albino when a clip shows several people
     "sound": "TEXT",   # trending TikTok sound: Gemini's suggestions + the user's choice
     "handle": "TEXT",  # which creator this video (and its clips) came from
+    "tiktok_opts": "TEXT",  # what the user picked for the TikTok post: privacy, comment/duet/stitch, disclosure
 }
 
 _SCHEMA = """

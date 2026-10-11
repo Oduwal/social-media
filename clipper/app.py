@@ -715,6 +715,42 @@ def _move(video_id: str, from_state: str, **fields) -> None:
         raise HTTPException(409, "The clip changed in the meantime; reload the page")
 
 
+def _tiktok_opts(form) -> dict:
+    """What the user picked in the clip page's TikTok box. Nothing is pre-selected: privacy
+    must be chosen, and comments/duets/stitches stay off unless ticked (TikTok's rules)."""
+    return {"privacy": str(form.get("tiktok_privacy", "")),
+            "comment": bool(form.get("tiktok_comment")), "duet": bool(form.get("tiktok_duet")),
+            "stitch": bool(form.get("tiktok_stitch")), "commercial": bool(form.get("tiktok_commercial")),
+            "own_brand": bool(form.get("tiktok_own_brand")), "branded": bool(form.get("tiktok_branded")),
+            "consent": bool(form.get("tiktok_consent"))}
+
+
+def _check_tiktok_opts(opts: dict, cfg: dict) -> None:
+    """Direct posting needs the user's explicit choices before anything is sent."""
+    if not opts["privacy"]:
+        raise HTTPException(400, "Choose who can see the TikTok post (privacy)")
+    if opts["commercial"] and not (opts["own_brand"] or opts["branded"]):
+        raise HTTPException(400, "Commercial content is on: say whether it promotes your own brand or a third party")
+    if opts["branded"] and opts["privacy"] == "SELF_ONLY":
+        raise HTTPException(400, "Branded content can't be private; pick another privacy level")
+    if not opts["consent"]:
+        raise HTTPException(400, "Tick the TikTok consent box to post")
+
+
+@app.get("/api/tiktok/creator_info")
+def tiktok_creator_info():
+    """For the clip page's TikTok box: the account name and the privacy levels it may use."""
+    try:
+        info = platforms.module("tiktok").creator_info()
+    except Exception as err:  # noqa: BLE001 - not connected, expired login, no Direct Post yet
+        return {"ok": False, "message": str(err)[:300]}
+    return {"ok": True, "name": info.get("creator_nickname") or info.get("creator_username") or "",
+            "privacy_options": info.get("privacy_level_options") or [],
+            "comment_disabled": bool(info.get("comment_disabled")),
+            "duet_disabled": bool(info.get("duet_disabled")),
+            "stitch_disabled": bool(info.get("stitch_disabled"))}
+
+
 @app.post("/jobs/{video_id}/approve")
 async def approve(request: Request, video_id: str):
     job = _job_or_404(video_id)
@@ -724,11 +760,16 @@ async def approve(request: Request, video_id: str):
     platforms = [p for p in config.PLATFORMS if form.get(f"platform_{p}")]
     if not platforms:
         raise HTTPException(400, "Tick at least one platform")
+    cfg = config.load()
+    opts = _tiktok_opts(form)
+    if "tiktok" in platforms and cfg["posting"]["service"] == "direct" \
+            and cfg["posting"]["tiktok_mode"] == "direct":
+        _check_tiktok_opts(opts, cfg)
     captions = {p: str(form.get(f"caption_{p}", "")).strip() for p in config.PLATFORMS}
     if len(captions["x"]) > 280:
         raise HTTPException(400, "The X caption is over 280 characters")
     _move(video_id, "READY", captions=captions, platforms=platforms,
-          ai_label=bool(form.get("ai_label")), state="APPROVED", error=None, hold=False)
+          ai_label=bool(form.get("ai_label")), tiktok_opts=opts, state="APPROVED", error=None, hold=False)
     hooks["wake_worker"]()
     return _back(video_id)
 
@@ -740,7 +781,7 @@ async def save_captions(request: Request, video_id: str):
     db.update(video_id,
               captions={p: str(form.get(f"caption_{p}", "")).strip() for p in config.PLATFORMS},
               platforms=[p for p in config.PLATFORMS if form.get(f"platform_{p}")],
-              ai_label=bool(form.get("ai_label")))
+              ai_label=bool(form.get("ai_label")), tiktok_opts=_tiktok_opts(form))
     return _back(video_id)
 
 
