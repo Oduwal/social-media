@@ -402,6 +402,17 @@ def apply_watermark(path, cfg: dict):
     return path
 
 
+def _record_timing(video_id: str, step: str, seconds: float) -> None:
+    """Wall time per step, kept in the job folder (timing.json) to size workers and prices."""
+    try:
+        path = config.job_dir(video_id) / "timing.json"
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        data.setdefault(step, []).append(round(seconds, 1))
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except Exception as err:  # noqa: BLE001 - measuring must never break the pipeline
+        log.debug("couldn't record timing for %s: %s", video_id, err)
+
+
 def advance(job: dict, cfg: dict = None) -> str:
     """Run the next step of one job. Returns the step name that ran."""
     cfg = cfg or config.load()
@@ -412,9 +423,11 @@ def advance(job: dict, cfg: dict = None) -> str:
             return step  # rejected or changed since it was picked up
         state = "POSTING"
     log.info("[%s] %s", vid, step)
+    started = time.monotonic()
     try:
         # a step may stop at a waiting state instead (transform -> LOOK: approve the look first)
         stopped_at = run_step(job, step, cfg)
+        _record_timing(vid, step, time.monotonic() - started)
     except (flow_robot.Paused, flow_robot.NeedsYou) as err:
         # The Flow robot can't go on right now (paused, daily cap, signed out, low credits):
         # the clip waits in the queue with the reason shown, and carries on by itself later.
