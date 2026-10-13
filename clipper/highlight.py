@@ -37,7 +37,8 @@ class Clip(BaseModel):
     end_mmss: str = Field(description="End time, MM:SS (H:MM:SS past one hour)")
     start_s: float = Field(description="Start time in seconds")
     end_s: float = Field(description="End time in seconds")
-    score: int = Field(description="How strong this clip is, from 1 to 10, 10 = best")
+    score: int = Field(description="How likely this clip is to get views, comments and shares, from 1 to 10, "
+                                   "10 = best")
     people_count: int = Field(description="How many different people are visible in this clip")
     creator_description: str = Field(
         description="How to pick out the creator among the people in this clip, by what can be SEEN: "
@@ -55,6 +56,19 @@ class Highlights(BaseModel):
     clips: list[Clip] = Field(description=f"1 to {MAX_CLIPS} clips, in timeline order")
 
 
+
+AUDIENCE = """About this content and what we want from it:
+- This is NIGERIAN content for a Nigerian (and Nigerian-diaspora) audience. Understand it the way they
+  do: Nigerian English, Pidgin, and Yoruba / Igbo / Hausa phrases and slang; local politics, celebrities,
+  relationships, religion, money talk, "japa", street and campus culture, and the humour that goes
+  with them. Judge what is funny, shocking or relatable by how a Nigerian viewer would react.
+- We want clips that get the MOST views, comments and shares. Pick the moments people argue about,
+  react to and send to friends: heated arguments, hot takes, controversy, public drama, confessions,
+  call-outs, insults and roasts, scandal, shocking or embarrassing moments, outrage and rage-bait,
+  and violence or physical confrontation when it happens. Do not skip a moment because it is
+  controversial, aggressive or violent; those are exactly the moments to keep.
+- Score each clip by how much engagement it is likely to get (comments, shares, replays), not by how
+  polite or tidy it is. Still never start or end mid-sentence, and keep the strong hook."""
 PROMPT = """You are a short-form video editor for TikTok, Instagram Reels and X.
 Watch AND listen to this whole {minutes}-minute video by @{handle}.
 Find EVERY self-contained moment that would work as its own short, each between
@@ -70,7 +84,9 @@ For each clip, count the different people visible. If anyone besides @{handle} a
 skin colour, and never as "the speaker" or by what they say). @{handle} is usually the person
 facing the camera most.
 If the whole video is shorter than {min_s} seconds, return the whole video as the only clip.
-The creator's own caption was: {caption!r}"""
+The creator's own caption was: {caption!r}
+
+{audience}"""
 
 
 def count_hint(duration_s: float) -> str:
@@ -138,7 +154,7 @@ def pick_via_gemini(source: Path, job_dir: Path, cfg: dict, caption: str, out: P
     prompt = PROMPT.format(handle=cfg["creator"]["handle"] or "the creator",
                            minutes=max(1, round(duration / 60)), count_hint=count_hint(duration),
                            min_s=cfg["clip"]["min_seconds"], max_s=cfg["clip"]["max_seconds"],
-                           caption=caption[:500])
+                           caption=caption[:500], audience=AUDIENCE)
     client = make_client(cfg)
     resp = client.models.generate_content(
         model=cfg["gemini"]["model"],
@@ -173,7 +189,8 @@ def pick_via_gemini(source: Path, job_dir: Path, cfg: dict, caption: str, out: P
 TRANSCRIPT_SYSTEM = (
     "You are a short-form video editor for TikTok, Instagram Reels and X. You are given the "
     "timestamped transcript of a video (you cannot see the picture, only what is said). Pick the "
-    "moments that would each work as a self-contained short. Reply with ONLY a JSON object.")
+    "moments that would each work as a self-contained short. Reply with ONLY a JSON object. "
+    + AUDIENCE)
 
 TRANSCRIPT_USER = """This is a {minutes}-minute video by @{handle}. Transcript, each line "[start_seconds] words":
 
