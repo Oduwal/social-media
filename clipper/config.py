@@ -24,7 +24,7 @@ DEFAULTS = {
     "gemini": {"project_id": "", "location": "global", "model": "gemini-3.5-flash",
                # tried in order when `model` fails on every key (overloaded, or its free quota is used up;
                # the free tier counts quota per model, so another model may still have room)
-               "fallback_models": ["gemini-3.6-flash"],
+               "fallback_models": ["gemini-flash-latest", "gemini-3-flash-preview", "gemini-3.6-flash"],
                "service_account_key": "", "backends": ["vertex", "aistudio"]},
     # Which engine picks highlights: "gemini" watches the video; "agentrouter" reads a transcript
     # of it (Claude/OpenAI via the Agent Router gateway, an OpenAI-compatible API).
