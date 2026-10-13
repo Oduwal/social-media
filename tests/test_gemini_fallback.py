@@ -228,3 +228,20 @@ def test_falls_back_to_another_model_when_the_first_fails_on_every_key(monkeypat
     with pytest.raises(gemini.NoGemini):
         gemini.make_client(cfg).models.generate_content(model="main")
     gemini._down.clear()
+
+
+def test_a_hung_request_moves_to_the_next_key_without_retrying(routes, monkeypatch):
+    calls, fails = routes
+    slept = []
+    monkeypatch.setattr(gemini.time, "sleep", lambda s: slept.append(s))
+    monkeypatch.setenv("GEMINI_API_KEY", "key1, key2")
+    cfg = config._merge(CFG, {"gemini": {"backends": ["aistudio"]}})
+
+    class ReadTimeout(Exception):
+        pass
+
+    fails["aistudio#0"] = ReadTimeout("The read operation timed out")
+    client = gemini.make_client(cfg)
+    assert client.models.generate_content(model="m") == "answer from aistudio"
+    assert client.used == "aistudio#1" and slept == []        # no backoff waits on a hung key
+    assert gemini.timed_out(ReadTimeout("x")) and not gemini.timed_out(Refused(503, "high demand"))

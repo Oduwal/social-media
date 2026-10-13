@@ -50,7 +50,14 @@ def account_problem(err: Exception) -> bool:
     return code == 429  # quota-less 429: still worth the other route, but only briefly (see rest_for)
 
 
+REQUEST_TIMEOUT_MS = 8 * 60 * 1000  # a request that hasn't answered by then is hung (a normal one takes ~5 min)
 TRANSIENT_BACKOFF = (3, 10, 25)  # seconds to wait before each retry of a temporary error
+
+
+def timed_out(err: Exception) -> bool:
+    """The request itself hung (no answer in REQUEST_TIMEOUT_MS): another key is the better bet
+    than asking the same one again."""
+    return "timeout" in type(err).__name__.lower() or "timed out" in str(err).lower()         or "deadline_exceeded" in str(err).lower()
 
 
 def transient(err: Exception) -> bool:
@@ -104,17 +111,18 @@ def available(cfg: dict) -> list:
 
 def _raw_client(route: str, cfg: dict):
     from google import genai
+    from google.genai import types
 
     if route.startswith("aistudio"):
         i = int(route.split("#", 1)[1]) if "#" in route else 0
-        return genai.Client(api_key=keys()[i])
+        return genai.Client(api_key=keys()[i], http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS))
     from google.oauth2 import service_account
 
     gcfg = cfg["gemini"]
     creds = service_account.Credentials.from_service_account_file(
         gcfg["service_account_key"], scopes=["https://www.googleapis.com/auth/cloud-platform"])
     return genai.Client(vertexai=True, project=gcfg["project_id"], location=gcfg["location"],
-                        credentials=creds)
+                        credentials=creds, http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS))
 
 
 def status(cfg: dict) -> list:
@@ -210,7 +218,7 @@ class Client:
                         log.warning("Gemini via %s unavailable (%s); trying the next one", name, str(err)[:200])
                         errors.append(f"{name}: {str(err)[:200]}")
                         break  # next route
-                    if transient(err) and attempt < len(TRANSIENT_BACKOFF):
+                    if transient(err) and attempt < len(TRANSIENT_BACKOFF) and not timed_out(err):
                         wait = TRANSIENT_BACKOFF[attempt]
                         log.info("Gemini via %s: temporary error, retrying in %ds (%s)",
                                  name, wait, str(err)[:120])
