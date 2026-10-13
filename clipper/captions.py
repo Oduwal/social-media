@@ -9,6 +9,7 @@ trip the recogniser, so captions are meant to be checked and fixed in the editor
 import json
 import logging
 import math
+import difflib
 import re
 import shutil
 import tempfile
@@ -28,9 +29,60 @@ class CaptionError(RuntimeError):
     pass
 
 
-def transcribe(job_dir: Path) -> list:
-    """[{"text", "start", "end"}, ...] for every spoken word of transformed.mp4 (cached)."""
-    return words_for(job_dir / "transformed.mp4", job_dir / TRANSCRIPT)
+def transcribe(job_dir: Path, reference: str = "") -> list:
+    """[{"text", "start", "end"}, ...] for every spoken word of transformed.mp4 (cached).
+    `reference`: what Gemini heard in this clip (its spoken_words); where it disagrees with the
+    on-device recogniser, its spelling is used and the recogniser's timing kept."""
+    words = words_for(job_dir / "transformed.mp4", job_dir / TRANSCRIPT)
+    return correct_words(words, reference) if reference else words
+
+
+MIN_AGREEMENT = 0.5  # below this the two transcripts are too different to trust the match
+
+
+def _norm(token: str) -> str:
+    return re.sub(r"[^\w']", "", token.lower())
+
+
+def correct_words(words: list, reference: str) -> list:
+    """Parakeet's word timings with Gemini's wording. The two transcripts are lined up word by
+    word; matching words take Gemini's spelling and punctuation, a stretch they disagree on gets
+    Gemini's words spread over the same stretch of time. Words only Parakeet heard are kept
+    (never drop speech), and words only Gemini heard are added only where there's a gap to put
+    them in. If the transcripts barely agree, Parakeet's are returned untouched."""
+    ref = reference.split()
+    if not words or not ref:
+        return words
+    a, b = [_norm(w["text"]) for w in words], [_norm(t) for t in ref]
+    sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
+    if sm.ratio() < MIN_AGREEMENT:
+        return words
+    out = []
+    for op, i1, i2, j1, j2 in sm.get_opcodes():
+        if op == "equal":
+            out += [{**words[i1 + k], "text": ref[j1 + k]} for k in range(i2 - i1)]
+        elif op == "delete":
+            out += words[i1:i2]
+        elif op == "replace":
+            start, end = words[i1]["start"], words[i2 - 1]["end"]
+            out += _spread(ref[j1:j2], start, end)
+        elif op == "insert":
+            prev_end = out[-1]["end"] if out else 0.0
+            next_start = words[i1]["start"] if i1 < len(words) else prev_end + 0.12 * (j2 - j1)
+            if next_start - prev_end >= 0.12 * (j2 - j1):
+                out += _spread(ref[j1:j2], prev_end, next_start)
+    return out
+
+
+def _spread(tokens: list, start: float, end: float) -> list:
+    """The tokens laid evenly (by letters) across [start, end]."""
+    total = sum(len(t) for t in tokens) or 1
+    out, at = [], start
+    for t in tokens:
+        nxt = at + (end - start) * len(t) / total
+        out.append({"text": t, "start": round(at, 3), "end": round(nxt, 3)})
+        at = nxt
+    return out
 
 
 def words_for(video: Path, cache: Path) -> list:
@@ -124,9 +176,9 @@ def group(words: list) -> list:
     return groups
 
 
-def captions_for(job_dir: Path, trim_start: float, trim_end: float) -> list:
+def captions_for(job_dir: Path, trim_start: float, trim_end: float, reference: str = "") -> list:
     """Caption texts for the editor, timed from the trimmed clip's start."""
-    words = [w for w in transcribe(job_dir) if w["end"] > trim_start and w["start"] < trim_end]
+    words = [w for w in transcribe(job_dir, reference) if w["end"] > trim_start and w["start"] < trim_end]
     texts = []
     chunks = group(words)
     for i, chunk in enumerate(chunks):

@@ -336,7 +336,7 @@ def render_project(job_dir: Path, out_name: str = "final.mp4", music: bool = Tru
         _run(["render", proj, "-c", page, "-o", tmp.resolve(), "--quality", "looks", "--quiet"], timeout=3600)
         if media.duration(tmp) < 1:
             raise StudioError("HyperFrames made an empty video")
-        tmp.replace(out)
+        media.replace(tmp, out)
     finally:
         tmp.unlink(missing_ok=True)
         if not music:

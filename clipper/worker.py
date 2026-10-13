@@ -12,7 +12,7 @@ import threading
 import time
 import traceback
 
-from . import config, cutter, db, downloader, highlight, media, monitor, music, notify, publisher, render
+from . import batch_edit, config, cutter, db, downloader, highlight, media, monitor, music, notify, publisher, render
 from . import flow_robot, platforms, project, render2, shotcut, studio, transform_adapter, trending
 
 log = logging.getLogger(__name__)
@@ -314,6 +314,8 @@ def tiktok_video(job: dict, cfg: dict):
     if source == "shotcut":
         return final
     out = job_dir / "final_tiktok.mp4"
+    if source == "batch":  # this clip's own watermark answer
+        cfg = batch_edit.watermark_cfg((job.get("info") or {}).get("batch_edit") or {}, cfg)
     if out.exists() and out.stat().st_mtime >= final.stat().st_mtime:
         return out
     if source == "studio":  # the same Studio project, minus Clipper's music track
@@ -373,7 +375,13 @@ def render_edit(job: dict, cfg: dict) -> None:
     vid = job["video_id"]
     job_dir = config.job_dir(vid)
     source = (job.get("info") or {}).get("render_from")
-    if source == "shotcut":
+    spec = (job.get("info") or {}).get("batch_edit") if source == "batch" else None
+    if spec:  # the answers from the library's Batch edit: made into this clip's edit now
+        edit = batch_edit.build_edit(spec, job, job_dir, cfg)
+        db.update(vid, edit=edit, music_track=edit["music"]["track"], music_volume=edit["music"]["volume"])
+        render.render(edit, job_dir)
+        cfg = batch_edit.watermark_cfg(spec, cfg)
+    elif source == "shotcut":
         shotcut.render_project(job_dir, cfg)
     elif source == "studio":
         studio.render_project(job_dir)
@@ -395,7 +403,7 @@ def apply_watermark(path, cfg: dict):
     try:
         media.watermark(path, tmp, wm["text"], wm.get("opacity", 0.35),
                         wm.get("position", "bottom-right"), wm.get("size", 4))
-        tmp.replace(path)
+        media.replace(tmp, path)
     except Exception as err:  # noqa: BLE001 - never let a watermark failure lose the clip
         log.warning("[watermark] couldn't add it to %s: %s", path.name, err)
         tmp.unlink(missing_ok=True)

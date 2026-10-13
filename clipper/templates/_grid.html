@@ -16,6 +16,16 @@
       {% endif %}
       <button class="btn" name="mode" value="discard">Discard</button>
     {% endif %}
+    <button class="btn" formaction="/clips/batch-edit" formmethod="get" onclick="return confirmEdit()"
+            title="Captions, title, filter, quality and watermark for all selected clips">Batch edit…</button>
+    {% if clips | selectattr("state", "equalto", "READY") | list %}
+    <button class="btn primary" formaction="/clips/batch-post" formmethod="get" onclick="return confirmEdit()"
+            title="Review and post all selected Ready clips together">Post selected…</button>
+    {% endif %}
+    {% if clips | selectattr("state", "equalto", "FAILED") | list %}
+    <button class="btn primary" formaction="/clips/retry" onclick="return confirmRetry()"
+            title="Try the step that failed again; each clip keeps its edit and captions">Retry selected</button>
+    {% endif %}
     <button class="btn danger" formaction="/clips/delete" onclick="return confirmDelete()">Delete selected</button>
   </div>
   {% endif %}

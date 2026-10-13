@@ -14,12 +14,12 @@ import threading
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import agentrouter, captions, catalog, cli_lock, config, db, downloader, editor2, gemini, media, monitor, music
+from . import agentrouter, batch_edit, captions, catalog, cli_lock, config, db, downloader, editor2, gemini, media, monitor, music
 from . import platforms, project, render, render2, shotcut, studio
 from . import flow_robot, transform_adapter, trending, worker
 
@@ -226,13 +226,50 @@ def job_page(request: Request, video_id: str):
 
 
 @app.get("/media/{video_id}/{name}")
-def media_file(video_id: str, name: str):
+def media_file(request: Request, video_id: str, name: str):
     if name not in MEDIA_FILES or not JOB_ID.match(video_id):
         raise HTTPException(404)
     path = config.JOBS_DIR / video_id / name
     if not path.exists():
         raise HTTPException(404)
-    return FileResponse(path, media_type=MEDIA_FILES[name])
+    return _unlocked_file(request, path, MEDIA_FILES[name])
+
+
+def _unlocked_file(request: Request, path: Path, media_type: str, chunk: int = 1 << 20):
+    """Serve a file (with Range support, so videos can seek) without keeping it open between
+    chunks. A paused or half-loaded <video> otherwise holds the file open, and on Windows a new
+    render can't replace a file that is open."""
+    size = path.stat().st_size
+    start, end = 0, size - 1
+    match = re.fullmatch(r"bytes=(\d*)-(\d*)", request.headers.get("range", "").strip())
+    if match and (match.group(1) or match.group(2)):
+        if match.group(1):
+            start = int(match.group(1))
+            end = min(int(match.group(2)), size - 1) if match.group(2) else size - 1
+        else:  # "-N": the last N bytes
+            start = max(0, size - int(match.group(2)))
+        if start > end or start >= size:
+            return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+
+    def body():
+        at = start
+        while at <= end:
+            try:
+                with open(path, "rb") as f:
+                    f.seek(at)
+                    data = f.read(min(chunk, end - at + 1))
+            except OSError:
+                return
+            if not data:
+                return
+            at += len(data)
+            yield data
+
+    headers = {"Accept-Ranges": "bytes", "Content-Length": str(end - start + 1)}
+    if start or end != size - 1:
+        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    return StreamingResponse(body(), status_code=206 if "Content-Range" in headers else 200,
+                             media_type=media_type, headers=headers)
 
 
 @app.get("/music/{name}")
@@ -266,6 +303,24 @@ async def pick_clips(request: Request):
     return _redirect(str(form.get("back") or "/library"))
 
 
+@app.post("/clips/retry")
+async def retry_clips(request: Request):
+    """Retry the ticked failed clips from the step that failed. Only the state changes, so each
+    keeps its edit, captions, platforms and TikTok choices; a failed post only tries the platforms
+    that haven't succeeded (the worker never re-sends one that went through)."""
+    form = await request.form()
+    ids = [i for i in form.getlist("ids") if JOB_ID.match(i)]
+    if not ids:
+        raise HTTPException(400, "Tick at least one clip")
+    for clip_id in ids:
+        job = db.get(clip_id)
+        if job and job["state"] == "FAILED":
+            db.retry(clip_id)
+            db.update(clip_id, hold=False)
+    hooks["wake_worker"]()
+    return _redirect(str(form.get("back") or "/library?tab=failed"))
+
+
 @app.post("/clips/delete")
 async def delete_clips(request: Request):
     """Permanently delete the ticked clips (their row and files). Not the Approve/post path."""
@@ -279,6 +334,67 @@ async def delete_clips(request: Request):
             if config.JOBS_DIR.resolve() in folder.parents:
                 shutil.rmtree(folder, ignore_errors=True)
     return _redirect(str(form.get("back") or "/library"))
+
+
+BATCH_STATES = ("PREVIEW", "READY")
+
+
+@app.get("/clips/batch-edit")
+def batch_edit_page(request: Request, ids: list[str] = Query(default=[]), back: str = "/library"):
+    """The questions for editing the ticked clips all at once."""
+    clips = [c for c in (db.get(i) for i in ids if JOB_ID.match(i)) if c and c["kind"] == "clip"
+             and (c["state"] in BATCH_STATES or editable(c))]
+    if not clips:
+        raise HTTPException(400, "Tick at least one clip that is in To review or Ready to post")
+    return templates.TemplateResponse(request, "batch_edit.html", {
+        "clips": clips, "opts": batch_edit.options(), "cfg": config.load(), "back": back,
+        "watermark": config.load()["watermark"], "render_opts": render.options(),
+        "presets": batch_edit.presets(), "last": batch_edit.last_used(),
+        "thumb": f"/media/{clips[0]['video_id']}/thumb.jpg"})
+
+
+@app.post("/clips/batch-edit/preset")
+async def batch_edit_save_preset(request: Request):
+    """Save the form's answers under a name ("my usual look")."""
+    form = await request.form()
+    name = batch_edit.save_preset(str(form.get("preset_name") or ""), batch_edit.clean_spec(form))
+    if not name:
+        raise HTTPException(400, "Give the preset a name")
+    return {"ok": True, "presets": batch_edit.presets()}
+
+
+@app.post("/clips/batch-edit/preset/delete")
+async def batch_edit_delete_preset(request: Request):
+    form = await request.form()
+    batch_edit.delete_preset(str(form.get("preset_name") or ""))
+    return {"ok": True, "presets": batch_edit.presets()}
+
+
+@app.post("/clips/batch-edit")
+async def batch_edit_apply(request: Request):
+    """Save the answers on each ticked clip and queue its render. Clips still in To review are
+    finished as they are (like Use these) with the edit applied; Ready ones are re-rendered."""
+    form = await request.form()
+    ids = [i for i in form.getlist("ids") if JOB_ID.match(i)]
+    if not ids:
+        raise HTTPException(400, "Tick at least one clip")
+    spec = batch_edit.clean_spec(form)
+    config.ui_set(batch_last=spec)  # the form opens with these answers next time
+    queued = 0
+    for clip_id in ids:
+        job = db.get(clip_id)
+        if not job or job["kind"] != "clip":
+            continue
+        info = {**(job.get("info") or {}), "render_from": "batch", "batch_edit": spec}
+        if job["state"] == "PREVIEW":
+            ok = db.transition(clip_id, "PREVIEW", state="CUT", transform_mode="original", hold=False, info=info)
+        elif editable(job):
+            ok = db.transition(clip_id, job["state"], state="TRANSFORMED", info=info, failed_step=None, error=None)
+        else:
+            ok = False
+        queued += bool(ok)
+    hooks["wake_worker"]()
+    return _redirect(str(form.get("back") or "/library") if queued else "/library")
 
 
 def via_upload_post(cfg: dict) -> bool:
@@ -541,12 +657,13 @@ def editor2_peaks(video_id: str, asset_id: str):
 @app.post("/api/clips/{video_id}/captions2")
 async def editor2_captions(request: Request, video_id: str):
     """Word-timed captions placed on the edited timeline (on-device speech-to-text)."""
-    _, job_dir = _clip_dir(video_id)
+    job, job_dir = _clip_dir(video_id)
     body = await _json(request)
     try:
         proj = editor2.clean(body.get("project") or {}, job_dir)
         style = body.get("style") if isinstance(body.get("style"), dict) else catalog.CAPTIONS[0]["style"]
-        items = await asyncio.to_thread(editor2.caption_items, job_dir, proj, style)
+        items = await asyncio.to_thread(editor2.caption_items, job_dir, proj, style,
+                                        (job.get("clip") or {}).get("spoken_words") or "")
     except (editor2.EditorError, captions.CaptionError, studio.StudioError, media.MediaError) as err:
         raise HTTPException(502, str(err)) from err
     return {"items": items}
@@ -648,7 +765,8 @@ async def auto_captions(request: Request, video_id: str):
     except (TypeError, ValueError) as err:
         raise HTTPException(400, "Bad trim") from err
     try:
-        texts = await asyncio.to_thread(captions.captions_for, job_dir, start, end)
+        texts = await asyncio.to_thread(captions.captions_for, job_dir, start, end,
+                                      (job.get("clip") or {}).get("spoken_words") or "")
     except (captions.CaptionError, studio.StudioError, media.MediaError) as err:
         raise HTTPException(502, str(err)) from err
     return {"texts": texts}
@@ -772,6 +890,69 @@ async def approve(request: Request, video_id: str):
           ai_label=bool(form.get("ai_label")), tiktok_opts=opts, state="APPROVED", error=None, hold=False)
     hooks["wake_worker"]()
     return _back(video_id)
+
+
+def tiktok_inbox_left(cfg: dict):
+    """Drafts TikTok will still take today, or None when drafts aren't how TikTok is posted to."""
+    if via_upload_post(cfg) or cfg["posting"]["tiktok_mode"] != "inbox":
+        return None
+    return platforms.module("tiktok").drafts_left()
+
+
+@app.get("/clips/batch-post")
+def batch_post_page(request: Request, ids: list[str] = Query(default=[]), back: str = "/library?tab=ready"):
+    """Review and approve several Ready clips at once (each keeps its own captions)."""
+    clips = [c for c in (db.get(i) for i in ids if JOB_ID.match(i)) if c and c["kind"] == "clip"
+             and c["state"] == "READY"]
+    if not clips:
+        raise HTTPException(400, "Tick at least one clip in Ready to post")
+    cfg = config.load()
+    connections = {p: platforms.module(p).status(cfg) for p in config.PLATFORMS} if not via_upload_post(cfg) else {}
+    return templates.TemplateResponse(request, "batch_post.html", {
+        "clips": clips, "cfg": cfg, "back": back, "platforms": config.PLATFORMS, "connections": connections,
+        # a platform that isn't connected can't be posted to: leave it unticked
+        "chosen": {p: any(p in (c.get("platforms") or []) for c in clips)
+                   and (not connections or connections[p]["connected"]) for p in config.PLATFORMS},
+        "tiktok_left": tiktok_inbox_left(cfg)})
+
+
+@app.post("/clips/batch-post")
+async def batch_post_apply(request: Request):
+    """Approve every ticked Ready clip for the chosen platforms with its own saved captions.
+    Everything is checked first, so a mistake in the form posts nothing."""
+    form = await request.form()
+    ids = [i for i in form.getlist("ids") if JOB_ID.match(i)]
+    chosen = [p for p in config.PLATFORMS if form.get(f"platform_{p}")]
+    if not ids or not chosen:
+        raise HTTPException(400, "Tick at least one clip and one platform")
+    cfg = config.load()
+    if not via_upload_post(cfg):
+        for p in chosen:
+            if not platforms.module(p).status(cfg)["connected"]:
+                raise HTTPException(400, f"{p} isn't connected (Connections page); untick it or connect it first")
+    opts = _tiktok_opts(form)
+    if "tiktok" in chosen and cfg["posting"]["service"] == "direct" and cfg["posting"]["tiktok_mode"] == "direct":
+        _check_tiktok_opts(opts, cfg)
+    left = tiktok_inbox_left(cfg) if "tiktok" in chosen else None
+    if left is not None and len(ids) > left and not form.get("tiktok_cleared"):
+        raise HTTPException(400, f"TikTok takes only about 5 drafts a day and has room for {left} more. "
+                                 f"Tick {left} clip{'s' if left != 1 else ''}, untick TikTok, "
+                                 f"or tick the box saying you've cleared your TikTok drafts.")
+    if not form.get("confirm"):
+        raise HTTPException(400, "Tick the box to confirm you want to post these clips")
+    jobs = [j for j in (db.get(i) for i in ids) if j and j["kind"] == "clip" and j["state"] == "READY"]
+    captions = {j["video_id"]: {p: str((j.get("captions") or {}).get(p, "")).strip() for p in config.PLATFORMS}
+                for j in jobs}
+    if "x" in chosen:
+        for vid, caps in captions.items():
+            if len(caps["x"]) > 280:
+                raise HTTPException(400, f"The X caption of clip {vid} is over 280 characters; fix it first")
+    for job in jobs:
+        db.transition(job["video_id"], "READY", captions=captions[job["video_id"]], platforms=chosen,
+                      ai_label=bool(form.get("ai_label")), tiktok_opts=opts, state="APPROVED", error=None,
+                      hold=False)
+    hooks["wake_worker"]()
+    return _redirect(str(form.get("back") or "/library?tab=ready"))
 
 
 @app.post("/jobs/{video_id}/save")

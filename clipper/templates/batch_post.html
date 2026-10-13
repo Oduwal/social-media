@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Post clips{% endblock %}
+{% block header %}<a class="btn" href="{{ back }}">Cancel</a>{% endblock %}
+{% block body %}
+<h1>Post {{ clips|length }} clip{{ "s" if clips|length > 1 }}</h1>
+<p class="muted small">Each clip goes up with its own saved caption. Open a clip first if a caption needs changing.
+  Nothing is sent until you tick the box at the bottom and press Post.</p>
+<form method="post" action="/clips/batch-post" class="card" style="display:grid; gap:14px; max-width:760px">
+  <input type="hidden" name="back" value="{{ back }}">
+  {% for c in clips %}<input type="hidden" name="ids" value="{{ c.video_id }}">{% endfor %}
+
+  <div style="display:grid; gap:8px; max-height:340px; overflow:auto">
+  {% for c in clips %}
+    <div class="row" style="align-items:flex-start; gap:10px">
+      <video src="/media/{{ c.video_id }}/final.mp4" poster="/media/{{ c.video_id }}/thumb.jpg" preload="none" controls muted
+             style="width:70px; border-radius:6px"></video>
+      <div style="min-width:0">
+        <a href="/jobs/{{ c.video_id }}"><b>{{ (c.info or {}).get("title") or c.video_id }}</b></a>
+        <div class="muted small" style="white-space:pre-line">{{ ((c.captions or {}).get("tiktok") or "")[:160] }}</div>
+      </div>
+    </div>
+  {% endfor %}
+  </div>
+
+  {% if tiktok_left is not none %}
+  <p class="banner {{ 'warn' if clips|length > tiktok_left else 'info' }} small">
+    TikTok holds only about <b>5 unposted drafts</b> per 24 hours. It has room for <b>{{ tiktok_left }}</b> more right now{% if clips|length > tiktok_left %}:
+    you ticked {{ clips|length }}, so untick TikTok or go back and tick {{ tiktok_left }}{% endif %}. Post or delete drafts in the TikTok app to free space.
+    Clips go up about 15 seconds apart.</p>
+  {% if clips|length > tiktok_left %}
+  <label class="row small"><input type="checkbox" name="tiktok_cleared"> I've already posted or deleted my old TikTok drafts (Clipper can't see that, so its count may be too high)</label>
+  {% endif %}
+  {% endif %}
+  <section>
+    <h2>Post to</h2>
+    {% for p in platforms %}
+      {% set conn = connections.get(p) %}
+      <label class="row"><input type="checkbox" name="platform_{{ p }}" {{ 'checked' if chosen[p] }} {{ 'disabled' if conn and not conn.connected }}>
+        <b>{{ {"tiktok":"TikTok","instagram":"Instagram Reels","x":"X"}[p] }}</b>
+        {% if conn %}{% if conn.connected %}<span class="small ok-text">✓ {{ conn.account or "connected" }}</span>
+        {% else %}<a class="small warn-text" href="/connections">not connected: set up ↗</a>{% endif %}{% endif %}
+        {% if p == "tiktok" and conn and conn.mode == "inbox" %}<span class="muted small">· goes to your TikTok inbox as a draft</span>{% endif %}</label>
+    {% endfor %}
+  </section>
+
+  {% if (connections or {}).get("tiktok") and connections.tiktok.mode == "direct" %}
+  <fieldset class="card" id="tiktokbox">
+    <legend><b>TikTok post settings (for all these clips)</b></legend>
+    <p class="small">Posting to: <b id="tt_name">loading…</b></p>
+    <p class="small warn-text" id="tt_error" hidden></p>
+    <label class="row">Who can watch
+      <select name="tiktok_privacy" id="tt_privacy"><option value="">— choose —</option></select></label>
+    <div class="row">
+      <label><input type="checkbox" name="tiktok_comment"> Allow comments</label>
+      <label><input type="checkbox" name="tiktok_duet"> Allow Duet</label>
+      <label><input type="checkbox" name="tiktok_stitch"> Allow Stitch</label>
+    </div>
+    <label class="row"><input type="checkbox" name="tiktok_commercial" id="tt_commercial"> Promotes a brand, product or service (commercial content)</label>
+    <div class="row" id="tt_brand" hidden>
+      <label><input type="checkbox" name="tiktok_own_brand"> Your own brand</label>
+      <label><input type="checkbox" name="tiktok_branded"> A third party's brand</label>
+    </div>
+    <label class="row"><input type="checkbox" name="tiktok_consent">
+      I agree to TikTok's <a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noopener">Music Usage Confirmation</a>
+      and I'm sharing these videos to my own account.</label>
+  </fieldset>
+  <script>
+  (function () {
+    var priv = document.getElementById("tt_privacy"), err = document.getElementById("tt_error");
+    var names = {PUBLIC_TO_EVERYONE: "Everyone", MUTUAL_FOLLOW_FRIENDS: "Friends", FOLLOWER_OF_CREATOR: "Followers", SELF_ONLY: "Only me"};
+    fetch("/api/tiktok/creator_info").then(function (r) { return r.json(); }).then(function (d) {
+      if (!d.ok) { document.getElementById("tt_name").textContent = "not available"; err.hidden = false; err.textContent = d.message; return; }
+      document.getElementById("tt_name").textContent = d.name || "your TikTok account";
+      d.privacy_options.forEach(function (o) { var opt = document.createElement("option"); opt.value = o; opt.textContent = names[o] || o; priv.appendChild(opt); });
+    }).catch(function () { err.hidden = false; err.textContent = "Couldn't reach TikTok"; });
+    document.getElementById("tt_commercial").addEventListener("change", function () { document.getElementById("tt_brand").hidden = !this.checked; });
+  })();
+  </script>
+  {% endif %}
+
+  <label class="row"><input type="checkbox" name="ai_label"> Label as AI-generated</label>
+  <label class="row"><input type="checkbox" name="confirm"> <b>Yes, post these {{ clips|length }} clip{{ "s" if clips|length > 1 }} now</b></label>
+  <div class="row"><button class="btn primary">Post {{ clips|length }} clip{{ "s" if clips|length > 1 }}</button></div>
+</form>
+{% endblock %}

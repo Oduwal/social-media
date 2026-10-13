@@ -235,7 +235,7 @@ def peaks(job_dir: Path, asset_id: str, per_second: int = 40) -> dict:
 
 # ------------------------------------------------------------------ captions on the timeline
 
-def caption_items(job_dir: Path, project: dict, style: dict) -> list:
+def caption_items(job_dir: Path, project: dict, style: dict, reference: str = "") -> list:
     """Word-timed captions for the edited timeline: each spoken word of the clip is placed
     where its moment lands after cuts and speed changes, then grouped into short captions."""
     from . import captions
@@ -245,7 +245,7 @@ def caption_items(job_dir: Path, project: dict, style: dict) -> list:
         src = project["assets"].get(item["asset"], {}).get("src")
         if src not in ("clip", "original"):  # only the clip's own sound is transcribed
             continue
-        for w in captions.transcribe(job_dir):
+        for w in captions.transcribe(job_dir, reference):
             if w["start"] >= item["in"] and w["end"] <= item["out"] + 0.05:
                 to_t = (lambda s, it=item, st=start: st + (s - it["in"]) / it["speed"])
                 words.append({"text": w["text"], "start": round(to_t(w["start"]), 3),

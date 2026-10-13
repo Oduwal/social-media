@@ -467,7 +467,7 @@ def render(project: dict, job_dir: Path, out_name: str = "final.mp4", music: boo
            tmp.name]
     try:
         media.run(cmd, cwd=job_dir, timeout=3600)
-        tmp.replace(job_dir / out_name)
+        media.replace(tmp, job_dir / out_name)
     finally:
         tmp.unlink(missing_ok=True)
     return job_dir / out_name

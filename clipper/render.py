@@ -22,6 +22,7 @@ and vignette are 2-6x slower at 1080x1920.
 
 import copy
 import re
+import shutil
 from pathlib import Path
 
 from . import config, media
@@ -41,6 +42,13 @@ FILTERS = {
     "bright": ("Bright", "eq=brightness=0.05:contrast=1.05:saturation=1.1"),
 }
 ZOOMS = {"none": "None", "slow_in": "Slow zoom in", "slow_out": "Slow zoom out"}
+# render quality: (label, x264 preset, crf (lower = sharper, bigger file), audio kbps)
+QUALITY = {
+    "draft": ("Draft (fast, small file)", "veryfast", 26, 128),
+    "standard": ("Standard", "veryfast", 20, 192),
+    "high": ("High (slower, sharper)", "slow", 16, 256),
+    "max": ("Max (slowest, biggest file)", "slower", 13, 320),
+}
 ZOOM_AMOUNT = 0.12
 
 # name: (font, colour, outline colour, outline px, border style 1=outline 3=box, shadow, bold)
@@ -52,7 +60,20 @@ TEXT_STYLES = {
     "neon": ("Arial Black", "#FFFFFF", "#FF2BD6", 5, 1, 0, True),
     "caption": ("Arial Black", "#FFFFFF", "#000000", 9, 1, 3, True),   # heavy outline, for captions
     "pill": ("Arial Black", "#FFFFFF", "#111111", 18, 3, 0, True),     # white on a dark pill
+    # more title designs (cards in colour, and fonts shipped in static/fonts)
+    "sticker": ("Arial Black", "#111111", "#FFFFFF", 16, 3, 0, True),      # black on a white card
+    "highlighter": ("Arial Black", "#111111", "#FFE600", 16, 3, 0, True),  # black on yellow marker
+    "red": ("Arial Black", "#FFFFFF", "#E5173F", 16, 3, 0, True),
+    "blue": ("Arial Black", "#FFFFFF", "#1E6BFF", 16, 3, 0, True),
+    "pink": ("Arial Black", "#FFFFFF", "#FF2BD6", 16, 3, 0, True),
+    "impact": ("Anton", "#FFFFFF", "#000000", 8, 1, 3, False),             # tall, heavy
+    "comic": ("Bangers", "#FFE600", "#000000", 8, 1, 3, False),
+    "handwritten": ("Permanent Marker", "#FFFFFF", "#000000", 6, 1, 2, False),
+    "cinema": ("Bebas Neue", "#FFFFFF", "#000000", 0, 1, 4, False),        # clean, tall, no outline
+    "retro": ("Luckiest Guy", "#FFFFFF", "#FF2BD6", 7, 1, 3, False),
 }
+TRANSLUCENT_CARDS = {"box", "pill"}  # the other cards are solid
+FONT_DIR = Path(__file__).resolve().parent / "static" / "fonts"
 POSITIONS = {"top": (8, 260), "middle": (5, 0), "bottom": (2, 420)}  # ASS alignment, margin from edge
 # Short-form caption effects (in the spirit of HyperFrames' caption styles), done by libass so
 # a render still takes seconds: words = each word appears as it's spoken, highlight = the word
@@ -73,6 +94,7 @@ def default_edit(duration: float, music_track: str = None, music_volume: float =
     return {
         "trim": {"start": 0.0, "end": round(duration, 3)},
         "filter": "none", "zoom": "none", "fade_in": 0.0, "fade_out": 0.0, "voice_volume": 1.0,
+        "quality": "standard",
         "music": {"track": music_track, "volume": 0.18 if music_volume is None else music_volume,
                   "offset": 0.0, "ducking": ducking, "fade_in": 0.5, "fade_out": 1.0},
         "texts": [],
@@ -113,6 +135,7 @@ def clean_edit(raw: dict, duration: float, tracks: set) -> dict:
     out["fade_in"] = _num(raw.get("fade_in"), 0, min(3, length / 2), 0.0)
     out["fade_out"] = _num(raw.get("fade_out"), 0, min(3, length / 2), 0.0)
     out["voice_volume"] = _num(raw.get("voice_volume"), 0, 2, 1.0)
+    out["quality"] = raw.get("quality") if raw.get("quality") in QUALITY else "standard"
 
     music = raw.get("music") or {}
     track = music.get("track") or None
@@ -299,7 +322,7 @@ def build_ass(texts: list) -> str:
              "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
              "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding"]
     for name, (font, colour, outline, width, border, shadow, bold) in TEXT_STYLES.items():
-        outline_ass = _ass_color(outline, 0x40 if border == 3 else 0)
+        outline_ass = _ass_color(outline, 0x40 if name in TRANSLUCENT_CARDS else 0)
         lines.append(f"Style: {name},{font},72,{_ass_color(colour)},&H000000FF,{outline_ass},"
                      f"&H64000000,{-1 if bold else 0},0,0,0,100,100,0,0,{border},{width},{shadow},"
                      f"2,70,70,200,1")
@@ -342,7 +365,7 @@ def build_command(edit: dict, base: Path, out: Path, music_path: Path = None,
     if FILTERS[edit["filter"]][1]:
         video.append(FILTERS[edit["filter"]][1])
     if ass_name:
-        video.append(f"subtitles={ass_name}")
+        video.append(f"subtitles={ass_name}:fontsdir=fonts")
     if edit["fade_in"]:
         video.append(f"fade=t=in:st=0:d={edit['fade_in']}")
     if edit["fade_out"]:
@@ -385,9 +408,10 @@ def build_command(edit: dict, base: Path, out: Path, music_path: Path = None,
         tail.append("loudnorm=I=-14:TP=-1.5:LRA=11")
     graph.append(f"{mixed}{','.join(tail)}[a]")
 
+    quality = QUALITY[edit.get("quality") if edit.get("quality") in QUALITY else "standard"]
     cmd += ["-filter_complex", ";".join(graph), "-map", "[v]", "-map", "[a]",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-            "-c:a", "aac", "-b:a", "192k", "-ar", "44100",
+            "-c:v", "libx264", "-preset", quality[1], "-crf", str(quality[2]),
+            "-c:a", "aac", "-b:a", f"{quality[3]}k", "-ar", "44100",
             "-t", f"{length:.3f}", "-movflags", "+faststart", str(out)]
     return cmd
 
@@ -406,11 +430,16 @@ def render(edit: dict, job_dir: Path, base_name: str = "transformed.mp4", out_na
     if edit["texts"]:
         ass_name = "edit.ass"
         (job_dir / ass_name).write_text(build_ass(edit["texts"]), encoding="utf-8")
+        fonts = job_dir / "fonts"  # subtitles= wants a plain relative fontsdir
+        fonts.mkdir(exist_ok=True)
+        for font in FONT_DIR.glob("*.ttf"):
+            if not (fonts / font.name).exists():
+                shutil.copyfile(font, fonts / font.name)
     tmp = job_dir / f"render_tmp_{out_name}"
     cmd = build_command(edit, base.resolve(), tmp.name, music_path, ass_name,
                         base_has_audio=media.has_audio(base))
     media.run(cmd, cwd=job_dir)
-    tmp.replace(job_dir / out_name)
+    media.replace(tmp, job_dir / out_name)
     return job_dir / out_name
 
 
@@ -432,9 +461,9 @@ def options() -> dict:
     return {
         "filters": {k: label for k, (label, _) in FILTERS.items()},
         "css_filters": preview_filters(),
-        "zooms": ZOOMS, "zoom_amount": ZOOM_AMOUNT,
-        "styles": {k: {"font": f, "color": c, "outline": o, "width": w, "box": b == 3, "shadow": s}
-                   for k, (f, c, o, w, b, s, _) in TEXT_STYLES.items()},
+        "zooms": ZOOMS, "zoom_amount": ZOOM_AMOUNT, "qualities": {k: v[0] for k, v in QUALITY.items()},
+        "styles": {k: {"font": f, "color": c, "outline": o, "width": w, "box": b == 3, "shadow": s, "bold": bold}
+                   for k, (f, c, o, w, b, s, bold) in TEXT_STYLES.items()},
         "positions": list(POSITIONS), "animations": list(ANIMATIONS), "max_texts": MAX_TEXTS,
     }
 

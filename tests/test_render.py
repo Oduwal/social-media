@@ -20,7 +20,7 @@ def _edit(**over):
 
 def test_clean_edit_clamps_and_whitelists():
     raw = _edit(trim={"start": -5, "end": 99}, filter="hacker", zoom="spin", fade_in=50, voice_volume="loud",
-                texts=[{"text": "  hi  ", "start": -1, "end": 99, "style": "comic", "position": "left",
+                texts=[{"text": "  hi  ", "start": -1, "end": 99, "style": "not-a-style", "position": "left",
                         "size": 9999, "color": "red", "animation": "spin"},
                        {"text": "   ", "start": 0, "end": 2},
                        "not a dict"])

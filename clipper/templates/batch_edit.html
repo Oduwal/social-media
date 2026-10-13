@@ -1,0 +1,300 @@
+{% extends "base.html" %}
+{% block title %}Batch edit{% endblock %}
+{% block header %}<a class="btn" href="{{ back }}">Cancel</a>{% endblock %}
+{% block body %}
+<style>
+  {% for face, file in [("Anton","Anton-Regular"),("Bangers","Bangers-Regular"),("Permanent Marker","PermanentMarker-Regular"),("Bebas Neue","BebasNeue-Regular"),("Luckiest Guy","LuckiestGuy-Regular")] %}
+  @font-face { font-family: "{{ face }}"; src: url("/static/fonts/{{ file }}.ttf"); }{% endfor %}
+  .be { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 20px; align-items: start; }
+  @media (max-width: 900px) { .be { grid-template-columns: 1fr; } }
+  .be section { border-top: 1px solid var(--line); padding-top: 12px; }
+  .be h2 { margin: 0 0 8px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+  .tile { position: relative; cursor: pointer; border: 2px solid var(--line); border-radius: 8px; overflow: hidden; background: #000; }
+  .tile input { position: absolute; opacity: 0; pointer-events: none; }
+  .tile:has(input:checked) { border-color: #4da3ff; box-shadow: 0 0 0 2px #4da3ff55; }
+  .tile .pic { position: relative; aspect-ratio: 9 / 14; background: center / cover no-repeat; overflow: hidden; }
+  .tile .pic .z { position: absolute; inset: 0; background: inherit; }
+  .tile .name { font-size: 11px; padding: 4px 6px; background: var(--card); color: inherit; line-height: 1.25; }
+  .cap { position: absolute; left: 4%; right: 4%; text-align: center; line-height: 1.1; pointer-events: none; }
+  .cap.top { top: 14%; } .cap.middle { top: 44%; } .cap.bottom { bottom: 14%; }
+  .cap .w { display: inline-block; margin: 0 .12em; }
+  @keyframes be-fade { 0%, 8% { opacity: 0 } 25%, 80% { opacity: 1 } 95%, 100% { opacity: 0 } }
+  @keyframes be-pop { 0%, 6% { transform: scale(.4); opacity: 0 } 16% { transform: scale(1.1); opacity: 1 } 22%, 80% { transform: scale(1); opacity: 1 } 95%, 100% { opacity: 0 } }
+  @keyframes be-zoom { from { transform: scale(1) } to { transform: scale(1.12) } }
+  @keyframes be-zoomout { from { transform: scale(1.12) } to { transform: scale(1) } }
+  .pv { position: sticky; top: 12px; }
+  .pv .pic { position: relative; aspect-ratio: 9 / 16; border-radius: 14px; overflow: hidden; background: #000; border: 2px solid var(--line); }
+  .pv .layer { position: absolute; inset: 0; background: center / cover no-repeat; }
+  .wm { position: absolute; font: 700 11px Poppins, Arial, sans-serif; color: #fff; text-shadow: 1px 1px 1px #0008; }
+  .saved { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+</style>
+
+<h1>Edit {{ clips|length }} clip{{ "s" if clips|length > 1 }}</h1>
+<p class="muted small">Answer once; every selected clip gets the same edit. Pick a look by clicking its picture; the phone on the
+  right shows your choices together (using your first clip's thumbnail). Clips render in the background and land in Ready to post.</p>
+
+<form method="post" action="/clips/batch-edit" id="beform">
+<div class="be">
+ <div class="card" style="display:grid; gap:18px">
+  <input type="hidden" name="back" value="{{ back }}">
+  {% for c in clips %}<input type="hidden" name="ids" value="{{ c.video_id }}">{% endfor %}
+
+  <section style="border-top:0; padding-top:0">
+    <h2>My looks</h2>
+    <div class="saved">
+      <select id="presetsel"><option value="">— saved looks —</option></select>
+      <button type="button" class="btn small" id="presetload">Use</button>
+      <button type="button" class="btn small danger" id="presetdel">Delete</button>
+      <span class="grow"></span>
+      <input id="presetname" placeholder="Name this look" style="width:150px">
+      <button type="button" class="btn small primary" id="presetsave">Save current as my look</button>
+    </div>
+    <p class="muted small" id="presetmsg">The form opens with what you used last time.</p>
+  </section>
+
+  <section>
+    <h2>Captions</h2>
+    <div class="tiles" id="captiontiles">
+    {% for key, label in opts.captions.items() %}
+      <label class="tile" data-kind="caption" data-key="{{ key }}">
+        <input type="radio" name="captions" value="{{ key }}">
+        <div class="pic" style="background-image:url('{{ thumb }}')"></div>
+        <div class="name">{{ label }}</div>
+      </label>
+    {% endfor %}
+    </div>
+    <label class="small row" style="margin-top:8px"><input type="checkbox" name="gemini_fix">
+      Fix wording with what Gemini heard (the on-device listener keeps the timing; helps with accents)</label>
+    <label class="small row" style="margin-top:8px">Position
+      <select name="caption_position">{% for p in opts.caption_positions %}<option>{{ p }}</option>{% endfor %}</select></label>
+  </section>
+
+  <section>
+    <h2>Title on the video</h2>
+    {% for key, label in opts.title_sources.items() %}
+      <label class="row"><input type="radio" name="title_source" value="{{ key }}"> {{ label }}</label>
+    {% endfor %}
+    <input name="title_text" placeholder="e.g. you're the only one who didn't know" style="width:100%">
+    <label class="small row"><input type="checkbox" name="title_pov"> Start with “POV:”</label>
+    <div class="tiles" style="margin-top:6px">
+    {% for s, label in opts.title_styles.items() %}
+      <label class="tile" data-kind="title" data-key="{{ s }}">
+        <input type="radio" name="title_style" value="{{ s }}">
+        <div class="pic" style="background-image:url('{{ thumb }}'); aspect-ratio: 9/9"></div>
+        <div class="name">{{ label }}</div>
+      </label>
+    {% endfor %}
+    </div>
+    <div class="row small" style="flex-wrap:wrap; gap:10px; margin-top:6px">
+      <label>Position <select name="title_position">{% for p in opts.title_positions %}<option>{{ p }}</option>{% endfor %}</select></label>
+      <label>Show for <input name="title_seconds" type="number" min="0" step="0.5" style="width:70px"> s (0 = whole clip)</label>
+    </div>
+  </section>
+
+  <section>
+    <h2>Filter</h2>
+    <div class="tiles">
+    {% for k, label in opts.filters.items() %}
+      <label class="tile" data-kind="filter" data-key="{{ k }}">
+        <input type="radio" name="filter" value="{{ k }}">
+        <div class="pic" style="background-image:url('{{ thumb }}'); aspect-ratio: 1/1; filter: {{ render_opts.css_filters[k] }}"></div>
+        <div class="name">{{ label }}</div>
+      </label>
+    {% endfor %}
+    </div>
+  </section>
+
+  <section>
+    <h2>Motion</h2>
+    <div class="tiles">
+    {% for k, label in opts.zooms.items() %}
+      <label class="tile" data-kind="zoom" data-key="{{ k }}">
+        <input type="radio" name="zoom" value="{{ k }}">
+        <div class="pic" style="aspect-ratio: 1/1"><div class="z" style="background-image:url('{{ thumb }}'); background-size:cover; background-position:center"></div></div>
+        <div class="name">{{ label }}</div>
+      </label>
+    {% endfor %}
+    </div>
+    <label class="small row" style="margin-top:8px"><input type="checkbox" name="fade"> Fade in / out</label>
+  </section>
+
+  <section>
+    <h2>Music</h2>
+    <select name="music">{% for k, label in opts.music.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select>
+  </section>
+
+  <section>
+    <h2>Render quality</h2>
+    <select name="quality">{% for k, label in opts.qualities.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select>
+    <p class="muted small">All are 1080×1920. Higher quality takes longer and makes bigger files.</p>
+  </section>
+
+  <section>
+    <h2>Watermark</h2>
+    <div class="row small" style="flex-wrap:wrap; gap:10px">
+      <input name="watermark_text" placeholder="@username (empty = none)">
+      <label>Position <select name="watermark_position">{% for p in opts.watermark_positions %}<option>{{ p }}</option>{% endfor %}</select></label>
+      <label>Opacity <input name="watermark_opacity" type="number" min="0.05" max="1" step="0.05" style="width:70px"></label>
+    </div>
+  </section>
+
+  <div class="row"><button class="btn primary">Apply to {{ clips|length }} clip{{ "s" if clips|length > 1 }}</button></div>
+ </div>
+
+ <div class="pv card">
+   <b class="small">Preview</b>
+   <div class="pic" id="pv"><div class="layer" id="pvbase" style="background-image:url('{{ thumb }}')"></div></div>
+   <p class="muted small">A rough guide: the final render uses the same colours and timing, but fonts and filters differ slightly.</p>
+ </div>
+</div>
+</form>
+
+<script>
+const OPT = {{ {"styles": render_opts.styles, "captions": opts.captions_look, "titleSizes": opts.title_sizes} | tojson }};
+const DEFAULT_WM = {{ {"text": watermark.text if watermark.enabled else "", "position": watermark.position, "opacity": watermark.opacity} | tojson }};
+let PRESETS = {{ presets | tojson }};
+const LAST = {{ last | tojson }};
+const form = document.getElementById("beform");
+// keyframes can't take variables, so the per-word ones (word i appears / lights up in its own slot) are written here
+document.head.insertAdjacentHTML("beforeend", "<style>" + [0, 1, 2, 3, 4].map((i) => {
+  const on = 6 + i * 16, off = on + 16;
+  return `@keyframes be-word${i} { 0%,${on}% { opacity: 0 } ${on + 2}%,88% { opacity: 1 } 97%,100% { opacity: 0 } }` +
+         `@keyframes be-lit${i} { 0%,${on}% { color: var(--base) } ${on + 1}%,${off}% { color: var(--accent); transform: scale(1.1) } ${off + 1}%,100% { color: var(--base) } }`;
+}).join("") + "</style>");
+const SAMPLE = {caption: "THIS IS HOW IT LOOKS", title: "wait for it", cap3: ["THIS", "IS HOW", "IT LOOKS"]};
+
+// ---- fields <-> spec
+function setSpec(spec) {
+  for (const [k, v] of Object.entries(spec)) {
+    const els = form.querySelectorAll(`[name="${k}"]`);
+    els.forEach((el) => {
+      if (el.type === "radio") el.checked = el.value === String(v);
+      else if (el.type === "checkbox") el.checked = !!v;
+      else el.value = v;
+    });
+  }
+  render();
+}
+const val = (n) => { const e = form.elements[n]; return e ? (e.type === "checkbox" ? e.checked : e.value) : ""; };
+
+// ---- caption / title text styling from Clipper's own style table
+function textCss(styleName, px) {
+  const s = OPT.styles[styleName] || OPT.styles.classic;
+  const css = {"font-family": `${s.font}, Arial, sans-serif`, "font-size": px + "px", "font-weight": s.bold ? 900 : 400, color: s.color};
+  if (s.box) { css.background = s.outline; css.padding = "0.15em 0.4em"; css["border-radius"] = "0.3em"; css.display = "inline-block"; }
+  else if (s.width) { css["-webkit-text-stroke"] = Math.max(1, s.width * px / 72 / 2) + "px " + s.outline; css["paint-order"] = "stroke fill"; }
+  if (s.shadow) css["text-shadow"] = `0 ${s.shadow * px / 72}px ${s.shadow * 3 * px / 72}px rgba(0,0,0,.7)`;
+  return css;
+}
+const styleStr = (o) => Object.entries(o).map(([k, v]) => `${k}:${v}`).join(";");
+
+// builds an animated caption element: width = the box it sits in (px), for font scaling
+function captionEl(lookKey, position, width, text, size) {
+  const look = OPT.captions[lookKey];
+  if (!look) return "";
+  const px = (size || look.size) * width / 1080 * 1.0;
+  const css = textCss(look.style, px);
+  const words = text.split(" ");
+  const L = 3.6; // loop seconds
+  let inner;
+  if (look.animation === "highlight") {
+    const n = words.length, accent = "#FFE600";
+    inner = words.map((w, i) => `<span class="w" style="--base:${OPT.styles[look.style].color};--accent:${accent};animation:be-lit${i} ${L}s infinite">${w}</span>`).join("");
+  } else if (look.animation === "words") {
+    inner = words.map((w, i) => `<span class="w" style="animation:be-word${i} ${L}s infinite">${w}</span>`).join("");
+  } else {
+    const anim = look.animation === "pop" ? "be-pop" : "be-fade";
+    inner = `<span style="display:inline-block;animation:${anim} ${L}s infinite">${text}</span>`;
+  }
+  return `<div class="cap ${position}" style="${styleStr(css)}">${inner}</div>`;
+}
+
+function titleEl(styleName, position, width, text) {
+  const css = textCss(styleName, (OPT.titleSizes[styleName] || 64) * width / 1080);
+  return `<div class="cap ${position}" style="${styleStr(css)}">${text}</div>`;
+}
+
+// ---- tiles: captions and title styles get a sample of themselves
+function paintTiles() {
+  document.querySelectorAll('.tile[data-kind="caption"]').forEach((t) => {
+    const pic = t.querySelector(".pic");
+    pic.querySelectorAll(".cap").forEach((e) => e.remove());
+    if (t.dataset.key === "none") { pic.insertAdjacentHTML("beforeend", '<div class="cap middle" style="color:#fff;font-size:12px;opacity:.8">no captions</div>'); return; }
+    pic.insertAdjacentHTML("beforeend", captionEl(t.dataset.key, "middle", 118, SAMPLE.caption));
+  });
+  document.querySelectorAll('.tile[data-kind="title"]').forEach((t) => {
+    const pic = t.querySelector(".pic");
+    pic.querySelectorAll(".cap").forEach((e) => e.remove());
+    pic.insertAdjacentHTML("beforeend", titleEl(t.dataset.key, "middle", 118, "POV: you…"));
+  });
+  document.querySelectorAll('.tile[data-kind="zoom"]').forEach((t) => {
+    const z = t.querySelector(".z"), k = t.dataset.key;
+    z.style.animation = k === "slow_in" ? "be-zoom 2.4s ease-in-out infinite alternate" : k === "slow_out" ? "be-zoomout 2.4s ease-in-out infinite alternate" : "none";
+  });
+}
+
+// ---- the phone
+function titleText() {
+  const src = val("title_source");
+  let t = src === "text" ? val("title_text").trim() : src === "ai" ? {{ ((clips[0].info or {}).get('title') or '') | tojson }} : "";
+  if (t && val("title_pov") && !/^pov/i.test(t)) t = "POV: " + t;
+  return t;
+}
+function render() {
+  const pv = document.getElementById("pv"), base = document.getElementById("pvbase");
+  const w = pv.clientWidth || 240;
+  pv.querySelectorAll(".cap,.wm").forEach((e) => e.remove());
+  const f = val("filter");
+  base.style.filter = ({{ render_opts.css_filters | tojson }})[f] || "none";
+  const z = val("zoom");
+  base.style.animation = z === "slow_in" ? "be-zoom 4s ease-in-out infinite alternate" : z === "slow_out" ? "be-zoomout 4s ease-in-out infinite alternate" : "none";
+  pv.insertAdjacentHTML("beforeend", captionEl(val("captions"), val("caption_position"), w, SAMPLE.caption));
+  const title = titleText();
+  if (title) pv.insertAdjacentHTML("beforeend", titleEl(val("title_style"), val("title_position"), w, title));
+  const wm = val("watermark_text").trim();
+  if (wm) {
+    const pos = val("watermark_position"), [v, h] = pos === "center" ? ["center", "center"] : pos === "bottom-center" ? ["bottom", "center"] : pos.split("-");
+    const st = [`opacity:${val("watermark_opacity") || .35}`];
+    st.push(v === "top" ? "top:3%" : v === "bottom" ? "bottom:3%" : "top:48%");
+    if (h === "left") st.push("left:3%"); else if (h === "right") st.push("right:3%"); else st.push("left:50%;transform:translateX(-50%)");
+    pv.insertAdjacentHTML("beforeend", `<div class="wm" style="${st.join(";")}">${wm.replace(/[^@A-Za-z0-9._\- ]/g, "")}</div>`);
+  }
+}
+form.addEventListener("input", render);
+form.addEventListener("change", render);
+
+// ---- saved looks
+const sel = document.getElementById("presetsel"), msg = document.getElementById("presetmsg");
+function fillPresets() {
+  sel.innerHTML = '<option value="">— saved looks —</option>' + Object.keys(PRESETS).map((n) => `<option>${n.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</option>`).join("");
+}
+async function post(url, extra) {
+  const fd = new FormData(form);
+  for (const [k, v] of Object.entries(extra)) fd.set(k, v);
+  const r = await fetch(url, {method: "POST", body: fd});
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  return r.json();
+}
+document.getElementById("presetsave").onclick = async () => {
+  const name = document.getElementById("presetname").value.trim();
+  if (!name) { msg.textContent = "Type a name for this look first."; return; }
+  try { PRESETS = (await post("/clips/batch-edit/preset", {preset_name: name})).presets; fillPresets(); sel.value = name; msg.textContent = `Saved “${name}”.`; }
+  catch (e) { msg.textContent = "Couldn't save: " + e.message; }
+};
+document.getElementById("presetload").onclick = () => {
+  if (PRESETS[sel.value]) { setSpec(PRESETS[sel.value]); msg.textContent = `Loaded “${sel.value}”.`; }
+};
+sel.onchange = () => document.getElementById("presetload").onclick();
+document.getElementById("presetdel").onclick = async () => {
+  if (!sel.value || !confirm(`Delete the saved look “${sel.value}”?`)) return;
+  PRESETS = (await post("/clips/batch-edit/preset/delete", {preset_name: sel.value})).presets; fillPresets(); msg.textContent = "Deleted.";
+};
+
+fillPresets();
+paintTiles();
+const start = {...LAST};
+if (!start.watermark_text) { start.watermark_text = DEFAULT_WM.text; start.watermark_position = start.watermark_position || DEFAULT_WM.position; start.watermark_opacity = DEFAULT_WM.opacity; }
+setSpec(start);
+</script>
+{% endblock %}

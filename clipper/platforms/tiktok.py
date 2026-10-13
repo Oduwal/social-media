@@ -111,6 +111,22 @@ def access_token() -> str:
 
 # ------------------------------------------------------------------- posting
 
+FRIENDLY = {
+    "spam_risk_too_many_pending_share": "TikTok allows only about 5 unposted drafts per 24 hours. Open TikTok, "
+                                        "post or delete the drafts in your inbox, then retry this clip",
+    "rate_limit_exceeded": "TikTok says you're sending too fast. Wait a few minutes, then retry this clip",
+}
+DRAFT_LIMIT, DRAFT_WINDOW = 5, 24 * 3600
+UPLOAD_GAP = 15.0  # seconds between uploads, so a batch doesn't trip TikTok's rate limit
+_last_upload = [0.0]
+
+
+def drafts_left() -> int:
+    """How many more clips TikTok will take into the inbox right now (it holds ~5 a day)."""
+    from .. import db
+    return max(0, DRAFT_LIMIT - db.count_tiktok_drafts(time.time() - DRAFT_WINDOW))
+
+
 def _api(path: str, body: dict) -> dict:
     resp = requests.post(f"{API}{path}", json=body, timeout=60,
                          headers={"Authorization": f"Bearer {access_token()}",
@@ -120,7 +136,8 @@ def _api(path: str, body: dict) -> dict:
     if resp.status_code >= 400 or (error.get("code") not in (None, "ok")):
         code = error.get("code", resp.status_code)
         definite = resp.status_code < 500 and code not in ("rate_limit_exceeded", "internal_error")
-        raise PostError(f"TikTok {code}: {error.get('message') or resp.text[:300]}", definite=definite)
+        raise PostError(f"TikTok {code}: {FRIENDLY.get(code) or error.get('message') or resp.text[:300]}",
+                        definite=definite)
     return data.get("data") or {}
 
 
@@ -182,6 +199,10 @@ def post(job: dict, video: Path, caption: str, ai_label: bool, cfg: dict, on_sub
                               "brand_organic_toggle": bool(picked.get("own_brand"))})
         data = _api("/post/publish/video/init/", {"source_info": source, "post_info": post_info})
     else:
+        wait_s = UPLOAD_GAP - (time.monotonic() - _last_upload[0])
+        if wait_s > 0:
+            time.sleep(wait_s)
+        _last_upload[0] = time.monotonic()
         data = _api("/post/publish/inbox/video/init/", {"source_info": source})
     publish_id = data["publish_id"]
     _upload(data["upload_url"], video)

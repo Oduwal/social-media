@@ -80,6 +80,9 @@ export function renderDesign() {
   else if (t.kind === "overlay") design.append(...overlay(it));
   else if (t.kind === "text" || t.kind === "caption") design.append(...text(it, t));
   else if (t.kind === "audio") design.append(...sound(it));
+  // the whole-video filter, fades and sound used to show only with nothing selected: keep it one click away
+  design.append(el("details", { class: "wholevideo" },
+    el("summary", {}, el("b", {}, "Whole video: filter, fades, sound")), projectSettings(false)));
 }
 
 function mainClip(it) {
@@ -181,10 +184,10 @@ function sound(it) {
       check(it.music, "This is background music (TikTok gets a version without it, for a trending sound)", set(it, "music", (v) => { it.music = v; })))];
 }
 
-function projectSettings() {
+function projectSettings(nothingSelected = true) {
   const p = S.project;
   return el("div", {},
-    el("p", { class: "muted small" }, "Nothing selected: click something on the video or the timeline. These settings apply to the whole video."),
+    nothingSelected ? el("p", { class: "muted small" }, "Nothing selected: click something on the video or the timeline. These settings apply to the whole video.") : null,
     section("Look", el("div", { class: "swatches" }, ...Object.entries(CAT.looks).map(([k, label]) => el("button", {
       class: "swatch" + (p.look.filter === k ? " on" : ""), onclick: () => { commit("look"); p.look.filter = k; changed("props"); renderDesign(); } },
       el("span", { class: "sample", style: { filter: CAT.css_looks[k] } }), label)))),

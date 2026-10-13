@@ -224,7 +224,7 @@ def test_filmstrip_and_waveform(client):
 def test_captions_land_where_the_words_are_after_cuts(tmp_path, monkeypatch):
     from clipper import captions
     words = [{"text": w, "start": s, "end": s + 0.3} for w, s in (("one", 0.5), ("two", 1.0), ("three", 3.2), ("four", 3.6))]
-    monkeypatch.setattr(captions, "transcribe", lambda job_dir: words)
+    monkeypatch.setattr(captions, "transcribe", lambda job_dir, reference="": words)
     p = P.clean(proj(tracks=[{"kind": "main", "items": [
         {"asset": "clip", "in": 0, "out": 2}, {"asset": "clip", "in": 3, "out": 5, "speed": 2}]}]), {"clip": CLIP})
     items = editor2.caption_items(tmp_path, p, {"font": "Anton", "effect": "highlight"})

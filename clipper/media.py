@@ -3,6 +3,7 @@
 import json
 import re
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -17,6 +18,21 @@ def run(cmd: list, timeout: float = 1800, cwd: Path = None) -> subprocess.Comple
         raise MediaError(f"{Path(str(cmd[0])).name} failed ({result.returncode}): "
                          f"{result.stderr.strip()[-1500:]}")
     return result
+
+
+def replace(tmp: Path, dst: Path, wait: float = 45.0) -> Path:
+    """tmp becomes dst. On Windows the swap is refused while another program (a video player, a
+    browser tab) has dst open, usually only for a moment, so it's retried for up to `wait` seconds."""
+    deadline = time.monotonic() + wait
+    while True:
+        try:
+            tmp.replace(dst)
+            return dst
+        except PermissionError as err:
+            if time.monotonic() >= deadline:
+                raise MediaError(f"{dst.name} is open in another program (a video player or a browser "
+                                 f"tab?). Close it and press Retry.") from err
+            time.sleep(0.5)
 
 
 def probe(path: Path) -> dict:

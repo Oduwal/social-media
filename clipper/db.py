@@ -307,6 +307,14 @@ def retry(video_id: str) -> None:
         update(video_id, state=RETRY_STATE[job["failed_step"]], failed_step=None, error=None)
 
 
+def count_tiktok_drafts(since: float) -> int:
+    """Clips sent to the TikTok inbox as drafts since `since` (TikTok allows about 5 pending a day)."""
+    with _lock:
+        row = _db().execute("SELECT COUNT(*) FROM jobs WHERE updated_at >= ? AND "
+                            "post_result LIKE '%\"drafted\": true%'", (since,)).fetchone()
+    return row[0]
+
+
 def reset_interrupted() -> None:
     """A crash mid-post leaves a job in POSTING. Put it back to READY so the
     user decides whether to post again, rather than risking a double post."""

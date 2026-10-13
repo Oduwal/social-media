@@ -25,7 +25,7 @@ def test_words_are_grouped_into_short_captions():
 
 
 def test_captions_are_timed_from_the_trim_and_carry_word_timings(tmp_path, monkeypatch):
-    monkeypatch.setattr(captions, "transcribe", lambda job_dir: WORDS)
+    monkeypatch.setattr(captions, "transcribe", lambda job_dir, reference="": WORDS)
     texts = captions.captions_for(tmp_path, 1.0, 6.0)   # trimmed: starts at 1 s
     assert [t["text"] for t in texts][:2] == ["to Mangolin.", "What is a"]  # words before the trim are left out
     first = texts[0]
@@ -94,3 +94,26 @@ def test_every_effect_and_style_renders(tmp_path):
     edit = {**render.default_edit(4.0), "texts": texts}
     out = render.render(render.clean_edit(edit, 4.0, set()), tmp_path)
     assert media.duration(out) == pytest.approx(4.0, abs=0.1)
+
+
+def test_gemini_wording_keeps_parakeet_timing():
+    heard = [_w("time", 0.2, 0.5), _w("go", 0.6, 0.9), _w("to", 1.0, 1.2), _w("man", 1.3, 1.6), _w("go", 1.6, 2.0),
+             _w("lean", 2.0, 2.4), _w("what", 3.0, 3.3), _w("is", 3.35, 3.5)]
+    fixed = captions.correct_words(heard, "Time to go to Mangolin. What is")
+    texts = [w["text"] for w in fixed]
+    assert texts[:4] == ["Time", "go", "to", "Mangolin."] or "Mangolin." in texts
+    assert texts[-2:] == ["What", "is"]                     # matching words: Gemini's spelling and punctuation
+    mang = next(w for w in fixed if w["text"] == "Mangolin.")
+    assert 1.3 <= mang["start"] and mang["end"] <= 2.4      # the disputed stretch keeps its time span
+    assert fixed[-1]["start"] == 3.35                       # untouched timing where they agree
+
+
+def test_gemini_wording_is_ignored_when_it_barely_matches():
+    heard = [_w("hello", 0, 0.5), _w("there", 0.5, 1.0)]
+    assert captions.correct_words(heard, "completely different words about nothing at all") == heard
+    assert captions.correct_words(heard, "") == heard
+
+
+def test_words_only_parakeet_heard_are_kept():
+    heard = [_w("we", 0, 0.3), _w("really", 0.3, 0.7), _w("did", 0.7, 1.0), _w("it", 1.0, 1.3)]
+    assert [w["text"] for w in captions.correct_words(heard, "We did it")] == ["We", "really", "did", "it"]

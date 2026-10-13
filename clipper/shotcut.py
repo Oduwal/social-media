@@ -158,5 +158,5 @@ def render_project(job_dir: Path, cfg: dict = None, out_name: str = "final.mp4")
               timeout=3600, cwd=project.parent)
     if not tmp.exists() or tmp.stat().st_size == 0:
         raise ShotcutError("melt finished without writing a video")
-    tmp.replace(job_dir / out_name)
+    media.replace(tmp, job_dir / out_name)
     return job_dir / out_name

@@ -111,6 +111,15 @@ if (checkall) checkall.addEventListener("change", () => {
   picks.forEach((p) => { p.checked = checkall.checked; });
   updatePickSummary();
 });
+function confirmEdit() {
+  if (!picks.some((p) => p.checked)) { alert("Tick at least one clip first."); return false; }
+  return true;
+}
+function confirmRetry() {
+  const n = picks.filter((p) => p.checked).length;
+  if (!n) { alert("Tick at least one clip first."); return false; }
+  return confirm(`Retry ${n} clip${n > 1 ? "s" : ""}? Each keeps its edit and captions. A clip that failed while posting will be sent again to the platforms it hasn't reached yet.`);
+}
 function confirmPick() {
   const n = picks.filter((p) => p.checked).length;
   if (!n) { alert("Tick at least one clip first."); return false; }
