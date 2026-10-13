@@ -27,6 +27,14 @@ MAX_CLIPS = 25
 # No numeric/length limits (ge/le/max_length) in these models: each is accepted by Vertex
 # alone, but the combination makes it reject the request as INVALID_ARGUMENT. The limits
 # are written into the descriptions and enforced in clean_clips() instead.
+CAPTION_RULES = (
+    "The post caption, written like a Nigerian viewer reacting, NOT a description of the video. "
+    "Never narrate or report what happens ('He talks about...', 'The creator explains...'). Instead give a "
+    "relatable reaction, comment or punchline someone would actually type under it, usually in Pidgin or "
+    "casual Nigerian English, e.g. 'gehgeh that one go far o', 'omo this one don pass me', 'no be small thing', "
+    "'who else dey go through this?', 'na wa o'. Short (under 12 words), one emoji at most, no hashtags. "
+    "Make people want to comment, tag a friend or argue.")
+
 class Clip(BaseModel):
     # Field order is generation order: grounding text before the timestamps.
     title: str = Field(description="A 3-8 word label for this moment, for the editor's library")
@@ -46,7 +54,7 @@ class Clip(BaseModel):
                     "colour, and never refer to speaking, talking, voice or 'the speaker' (the video editing "
                     "model reads that as a request to edit speech and refuses). Empty if only the creator "
                     "is visible.")
-    caption: str = Field(description="A short, punchy caption for this clip, no hashtags")
+    caption: str = Field(description=CAPTION_RULES)
     hashtags: list[str] = Field(description="Up to 5 hashtags for this clip, each starting with #")
     music_mood: Literal[MOODS] = Field(description="Background music mood that fits this clip")
 
@@ -67,6 +75,9 @@ AUDIENCE = """About this content and what we want from it:
   call-outs, insults and roasts, scandal, shocking or embarrassing moments, outrage and rage-bait,
   and violence or physical confrontation when it happens. Do not skip a moment because it is
   controversial, aggressive or violent; those are exactly the moments to keep.
+- CAPTIONS: write each caption as a relatable reaction a Nigerian viewer would post, in Pidgin or casual
+  Nigerian English, never as a report of what the video is about. Good: "gehgeh that one go far o".
+  Bad: "Gehgeh talks about how far he has gone".
 - Score each clip by how much engagement it is likely to get (comments, shares, replays), not by how
   polite or tidy it is. Still never start or end mid-sentence, and keep the strong hook."""
 PROMPT = """You are a short-form video editor for TikTok, Instagram Reels and X.
@@ -208,7 +219,7 @@ Reply with ONLY this JSON (no prose, no markdown):
   "reason": "<why it works as a short>", "hook": "<what grabs attention in the first 2 seconds>",
   "start_mmss": "<MM:SS>", "end_mmss": "<MM:SS>", "start_s": <number>, "end_s": <number>,
   "score": <1-10>, "people_count": 1, "creator_description": "",
-  "caption": "<short punchy caption, no hashtags>", "hashtags": ["#up to 5"],
+  "caption": "<relatable Nigerian-voice reaction (Pidgin / casual), not a description; no hashtags>", "hashtags": ["#up to 5"],
   "music_mood": "<one of: {moods}>"
 }}]}}"""
 
