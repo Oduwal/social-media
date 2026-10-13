@@ -178,3 +178,27 @@ def test_keys_rotate_when_one_is_over_its_limit(routes, monkeypatch):
     st = {r["name"]: r for r in gemini.status(cfg)}
     assert st["aistudio#0"]["skipped_until"] and not st["aistudio#1"]["skipped_until"]
     assert st["aistudio#0"]["label"] == "Free Gemini key #1"
+
+
+def test_a_busy_model_rotates_to_the_next_free_key(routes, monkeypatch):
+    calls, fails = routes
+    monkeypatch.setattr(gemini.time, "sleep", lambda s: None)
+    monkeypatch.setenv("GEMINI_API_KEY", "key1, key2, key3")
+    cfg = config._merge(CFG, {"gemini": {"backends": ["aistudio"]}})
+    busy = Refused(503, "503 UNAVAILABLE. This model is currently experiencing high demand.")
+    fails["aistudio#0"] = busy
+    fails["aistudio#1"] = busy
+    client = gemini.make_client(cfg)
+    assert client.models.generate_content(model="m") == "answer from aistudio"
+    assert client.used == "aistudio#2"                     # two keys stayed busy; the third answered
+    assert not any(r["skipped_until"] for r in gemini.status(cfg))   # a busy model isn't a used-up key
+
+
+def test_a_busy_model_on_the_last_key_still_raises(routes, monkeypatch):
+    calls, fails = routes
+    monkeypatch.setattr(gemini.time, "sleep", lambda s: None)
+    monkeypatch.setenv("GEMINI_API_KEY", "key1, key2")
+    cfg = config._merge(CFG, {"gemini": {"backends": ["aistudio"]}})
+    fails["aistudio"] = Refused(503, "503 UNAVAILABLE. high demand")
+    with pytest.raises(Refused):
+        gemini.make_client(cfg).models.generate_content(model="m")

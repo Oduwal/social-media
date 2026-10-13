@@ -195,8 +195,15 @@ class Client:
                                  name, wait, str(err)[:120])
                         time.sleep(wait)
                         continue
-                    # out of retries, or a real request error: stay on this route and raise rather
-                    # than fall through to another route (a blip mustn't send clips to the free tier)
+                    # Out of retries on an overloaded model: another free key may be answered at a calmer
+                    # moment, so rotate to the next AI Studio key. Vertex (paid) never falls through to
+                    # the free tier on a blip, and a real request error is raised as it is.
+                    if transient(err) and name.startswith("aistudio") and any(
+                            n.startswith("aistudio") for n in (live or names)[(live or names).index(name) + 1:]):
+                        log.warning("Gemini via %s still busy after retries (%s); trying the next key",
+                                    name, str(err)[:120])
+                        errors.append(f"{name}: {str(err)[:200]}")
+                        break
                     raise
                 else:
                     with _lock:
