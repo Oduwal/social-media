@@ -22,6 +22,9 @@ DEFAULTS = {
                 "playlist_end": 10, "auto_update_ytdlp": True},
     "clip": {"min_seconds": 15, "max_seconds": 45},
     "gemini": {"project_id": "", "location": "global", "model": "gemini-3.5-flash",
+               # tried in order when `model` fails on every key (overloaded, or its free quota is used up;
+               # the free tier counts quota per model, so another model may still have room)
+               "fallback_models": ["gemini-3.6-flash", "gemini-3.5-flash-lite"],
                "service_account_key": "", "backends": ["vertex", "aistudio"]},
     # Which engine picks highlights: "gemini" watches the video; "agentrouter" reads a transcript
     # of it (Claude/OpenAI via the Agent Router gateway, an OpenAI-compatible API).

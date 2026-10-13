@@ -169,6 +169,27 @@ class Client:
         return self._raw[name]
 
     def _call(self, method: str, args, kwargs):
+        """The call on the configured model; if that fails on every key for a reason another model
+        might not share (overloaded, or its quota used up), the same call on each fallback model."""
+        models = [kwargs.get("model")] + [m for m in (self.cfg["gemini"].get("fallback_models") or [])
+                                          if m != kwargs.get("model")] if kwargs.get("model") else [None]
+        for i, model in enumerate(models):
+            try:
+                return self._call_on(method, args, {**kwargs, "model": model} if model else kwargs)
+            except NoGemini as err:
+                last = err
+            except Exception as err:  # noqa: BLE001
+                if not transient(err):
+                    raise
+                last = err
+            if i + 1 < len(models):
+                log.warning("Gemini model %s failed on every key (%s); trying %s",
+                            model, str(last)[:120], models[i + 1])
+                for name in list(_down):  # a key used up on one model may be fine on the next
+                    _down.pop(name, None)
+        raise last
+
+    def _call_on(self, method: str, args, kwargs):
         names = available(self.cfg)
         if not names:
             raise NoGemini("No Gemini access is set up: add your Vertex project and key in config.yaml, "

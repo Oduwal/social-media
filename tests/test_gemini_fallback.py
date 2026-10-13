@@ -202,3 +202,29 @@ def test_a_busy_model_on_the_last_key_still_raises(routes, monkeypatch):
     fails["aistudio"] = Refused(503, "503 UNAVAILABLE. high demand")
     with pytest.raises(Refused):
         gemini.make_client(cfg).models.generate_content(model="m")
+
+
+def test_falls_back_to_another_model_when_the_first_fails_on_every_key(monkeypatch):
+    seen = []
+
+    class ModelAware:
+        def __init__(self, route):
+            self.models = self
+
+        def generate_content(self, **kw):
+            seen.append(kw["model"])
+            if kw["model"] == "main":
+                raise Refused(429, "quota exceeded for the free tier")
+            return f"answer from {kw['model']}"
+
+    gemini._down.clear()
+    monkeypatch.setenv("GEMINI_API_KEY", "key1, key2")
+    monkeypatch.setattr(gemini, "_raw_client", lambda route, cfg: ModelAware(route))
+    cfg = config._merge(CFG, {"gemini": {"backends": ["aistudio"], "fallback_models": ["second", "third"]}})
+    assert gemini.make_client(cfg).models.generate_content(model="main") == "answer from second"
+    assert seen == ["main", "main", "second"]            # both keys tried on main, then the fallback model
+    seen.clear()
+    cfg = config._merge(CFG, {"gemini": {"backends": ["aistudio"], "fallback_models": []}})
+    with pytest.raises(gemini.NoGemini):
+        gemini.make_client(cfg).models.generate_content(model="main")
+    gemini._down.clear()
