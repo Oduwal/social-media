@@ -1288,9 +1288,10 @@ def mark_posted(video_id: str, platform: str = Form(...)):
                       platform: {"ok": True, "url": "", "message": "Marked as posted by you", "drafted": False,
                                  "skipped": False, "manual": True}}
     pending = {k: v for k, v in (prior.get("pending") or {}).items() if k != platform}
-    fields = {"post_result": {**prior, "platforms": platforms_done, "pending": pending}}
-    if all(platforms_done.get(p, {}).get("ok") for p in (job.get("platforms") or [platform])):
-        fields.update(state="POSTED", failed_step=None, error=None)
+    # Marking a clip as posted files it under Posted right away (whatever the other platforms were
+    # ticked for), so it can't be approved or retried again by mistake.
+    fields = {"post_result": {**prior, "platforms": platforms_done, "pending": pending},
+              "state": "POSTED", "failed_step": None, "error": None}
     db.update(video_id, **fields)
     return _back(video_id)
 

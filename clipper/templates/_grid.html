@@ -49,9 +49,13 @@
       <div class="cardbody">
         <div class="row between">
           {% if c.state != "NEW" %}<label class="row"><input type="checkbox" name="ids" value="{{ c.video_id }}" class="pick"> <b class="small">Select</b></label>{% endif %}
-          <span class="state s-{{ c.state|lower }}">{{ c.state }}</span>
+          <span class="state s-{{ c.state|lower }}">{{ "✓ POSTED" if c.state == "POSTED" else c.state }}</span>
           <span class="muted small">{{ (c.clip or {}).get("score", "?") }}/10</span>
         </div>
+        {% if c.state == "POSTED" %}
+          {% set done = ((c.post_result or {}).get("platforms") or {}) %}
+          <div class="small ok-text">Posted on {% for p, r in done.items() if r.ok %}{{ {"tiktok":"TikTok","instagram":"Instagram","x":"X"}.get(p, p) }}{{ ", " if not loop.last }}{% endfor %}{% if (done.values() | selectattr("manual") | list) %} (marked by you){% endif %}</div>
+        {% endif %}
         <a href="/jobs/{{ c.video_id }}" class="cliptitle">{{ (c.info or {}).get("title") or c.video_id }}</a>
         {% set people = (c.clip or {}).get("people_count") or 0 %}
         {% if people > 1 %}

@@ -126,10 +126,12 @@ def test_mark_posted_finishes_the_clip(client, fresh_db):
     _approved(fresh_db, plats=("tiktok", "x"))
     db.update(CID, state="READY")
     client.post(f"/jobs/{CID}/mark_posted", data={"platform": "tiktok"})
-    assert db.get(CID)["state"] == "READY"
+    assert db.get(CID)["state"] == "POSTED"          # filed under Posted at once, so it can't be reposted
     client.post(f"/jobs/{CID}/mark_posted", data={"platform": "x"})
     job = db.get(CID)
     assert job["state"] == "POSTED" and job["post_result"]["platforms"]["x"]["manual"] is True
+    page = client.get("/library?tab=posted").text
+    assert "✓ POSTED" in page and "Posted on TikTok, X" in page and "marked by you" in page
 
 
 def test_forget_pending_allows_a_fresh_upload(client, fresh_db):
