@@ -239,3 +239,39 @@ def test_tiktok_draft_count_and_friendly_errors(fresh_db):
     db.update("4-01", post_result={"platforms": {"tiktok": {"ok": True, "drafted": True}}})
     assert db.count_tiktok_drafts(time.time() - 60) == 1 and db.count_tiktok_drafts(time.time() + 60) == 0
     assert "5 unposted drafts" in tiktok.FRIENDLY["spam_risk_too_many_pending_share"]
+
+
+def test_rewrite_captions_replaces_the_caption_and_keeps_credit_and_hashtags(client, monkeypatch):
+    from clipper import highlight
+    for cid, state in (("10-01", "READY"), ("10-02", "PREVIEW"), ("10-03", "POSTED")):
+        _clip(cid, state)
+        db.update(cid, clip={"caption": "He talks about money", "spoken_words": "abeg", "hashtags": ["#naija"]},
+                  captions={"tiktok": "old"})
+    seen = {}
+
+    def fake(items, cfg):
+        seen["ids"] = [i["id"] for i in items]
+        return {i["id"]: "omo this one don pass me" for i in items}
+
+    monkeypatch.setattr(highlight, "rewrite_captions", fake)
+    res = client.post("/clips/rewrite-captions", data={"ids": ["10-01", "10-02", "10-03"], "back": "/library"},
+                      follow_redirects=False)
+    assert res.status_code == 303 and seen["ids"] == ["10-01", "10-02"]           # posted clips are left alone
+    job = db.get("10-01")
+    assert job["clip"]["caption"] == "omo this one don pass me" and job["clip"]["hashtags"] == ["#naija"]
+    assert job["captions"]["tiktok"].startswith("omo this one don pass me") and "#naija" in job["captions"]["tiktok"]
+    assert db.get("10-03")["captions"] == {"tiktok": "old"}
+
+    def broken(items, cfg):
+        raise RuntimeError("503 high demand")
+
+    monkeypatch.setattr(highlight, "rewrite_captions", broken)
+    err = client.post("/clips/rewrite-captions", data={"ids": ["10-01"]})
+    assert err.status_code == 502 and "Nothing was changed" in err.text
+    assert client.post("/clips/rewrite-captions", data={"ids": ["10-03"]}).status_code == 400
+    assert db.get("10-01")["clip"]["caption"] == "omo this one don pass me"
+
+
+def test_clean_caption_strips_hashtags_and_whitespace():
+    from clipper import highlight
+    assert highlight.clean_caption("gehgeh   that one go far o #fyp\n#ng") == "gehgeh that one go far o"

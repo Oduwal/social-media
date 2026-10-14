@@ -115,6 +115,11 @@ function confirmEdit() {
   if (!picks.some((p) => p.checked)) { alert("Tick at least one clip first."); return false; }
   return true;
 }
+function confirmRewrite() {
+  const n = picks.filter((p) => p.checked).length;
+  if (!n) { alert("Tick at least one clip first."); return false; }
+  return confirm(`Rewrite the caption of ${n} clip${n > 1 ? "s" : ""} with Gemini? Any caption you edited by hand on them is replaced (the credit and hashtags are kept).`);
+}
 function confirmRetry() {
   const n = picks.filter((p) => p.checked).length;
   if (!n) { alert("Tick at least one clip first."); return false; }

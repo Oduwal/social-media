@@ -21,7 +21,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import agentrouter, batch_edit, captions, catalog, cli_lock, config, db, downloader, editor2, gemini, media, monitor, music
 from . import platforms, project, render, render2, shotcut, studio
-from . import flow_robot, transform_adapter, trending, worker
+from . import flow_robot, highlight, transform_adapter, trending, worker
 
 HERE = Path(__file__).resolve().parent
 MEDIA_FILES = {"source.mp4": "video/mp4", "highlight.mp4": "video/mp4", "transformed.mp4": "video/mp4",
@@ -319,6 +319,37 @@ async def retry_clips(request: Request):
             db.update(clip_id, hold=False)
     hooks["wake_worker"]()
     return _redirect(str(form.get("back") or "/library?tab=failed"))
+
+
+@app.post("/clips/rewrite-captions")
+async def rewrite_captions(request: Request):
+    """Gemini rewrites the post caption of each ticked clip in the relatable Nigerian voice (one
+    small text request). The creator credit and hashtags are kept; edits you made to a caption are
+    replaced, so only tick clips you want redone."""
+    form = await request.form()
+    ids = [i for i in form.getlist("ids") if JOB_ID.match(i)]
+    jobs = [j for j in (db.get(i) for i in ids) if j and j["kind"] == "clip"
+            and j["state"] not in ("POSTING", "POSTED", "REJECTED")]
+    if not jobs:
+        raise HTTPException(400, "Tick at least one clip that hasn't been posted")
+    cfg = config.load()
+    items = [{"id": j["video_id"], "title": (j.get("info") or {}).get("title", ""),
+              "spoken_words": ((j.get("clip") or {}).get("spoken_words") or "")[:600],
+              "hook": (j.get("clip") or {}).get("hook", ""), "reason": (j.get("clip") or {}).get("reason", "")}
+             for j in jobs]
+    try:
+        new = await asyncio.to_thread(highlight.rewrite_captions, items, cfg)
+    except Exception as err:  # noqa: BLE001 - no key, quota, Google busy: say so, change nothing
+        raise HTTPException(502, f"Gemini couldn't rewrite the captions right now ({str(err)[:200]}). "
+                                 "Nothing was changed; try again in a few minutes.") from err
+    for job in jobs:
+        caption = new.get(job["video_id"])
+        if not caption:
+            continue
+        clip = {**(job.get("clip") or {}), "caption": caption}
+        creator = config.creator_for(cfg, job.get("handle"))
+        db.update(job["video_id"], clip=clip, captions=worker.build_captions(clip, cfg, creator))
+    return _redirect(str(form.get("back") or "/library"))
 
 
 @app.post("/clips/delete")

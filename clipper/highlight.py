@@ -285,3 +285,47 @@ def clean_clips(clips: list, duration: float) -> list:
         if all(clip["end_s"] <= k["start_s"] or clip["start_s"] >= k["end_s"] for k in kept):
             kept.append(clip)
     return sorted(kept, key=lambda c: c["start_s"])
+
+
+# ------------------------------------------------------------ rewriting captions
+
+class _Rewritten(BaseModel):
+    id: str
+    caption: str = Field(description=CAPTION_RULES)
+
+
+class _Rewrites(BaseModel):
+    captions: list[_Rewritten]
+
+
+REWRITE_PROMPT = """You write post captions for short clips of Nigerian creators, for TikTok, Instagram Reels and X.
+Below are clips (id, title, what is said, why it works). Write ONE new caption for each.
+
+{rules}
+
+Return every id exactly as given.
+
+Clips:
+{clips}"""
+
+
+def clean_caption(text: str) -> str:
+    """One line, no hashtags (they're added separately), not absurdly long."""
+    text = re.sub(r"#\w+", "", str(text or ""))
+    return re.sub(r"\s+", " ", text).strip()[:200]
+
+
+def rewrite_captions(clips: list, cfg: dict) -> dict:
+    """{clip id: new caption} for clips given as [{id, title, spoken_words, hook, reason}], in the
+    relatable Nigerian voice (see CAPTION_RULES). One small text request for the whole batch."""
+    from google.genai import types
+
+    prompt = REWRITE_PROMPT.format(rules=CAPTION_RULES, clips=json.dumps(clips, ensure_ascii=False, indent=1))
+    resp = make_client(cfg).models.generate_content(
+        model=cfg["gemini"]["model"], contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json", response_schema=_Rewrites,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)))
+    parsed = resp.parsed or _Rewrites.model_validate_json(resp.text)
+    wanted = {c["id"] for c in clips}
+    return {r.id: clean_caption(r.caption) for r in parsed.captions if r.id in wanted and clean_caption(r.caption)}
