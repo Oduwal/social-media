@@ -275,3 +275,33 @@ def test_rewrite_captions_replaces_the_caption_and_keeps_credit_and_hashtags(cli
 def test_clean_caption_strips_hashtags_and_whitespace():
     from clipper import highlight
     assert highlight.clean_caption("gehgeh   that one go far o #fyp\n#ng") == "gehgeh that one go far o"
+
+
+def test_caption_ideas_are_built_per_platform_and_nothing_is_saved(client, monkeypatch):
+    from clipper import highlight
+    _clip("11-01", "READY")
+    db.update("11-01", clip={"caption": "old", "hashtags": ["#naija"], "spoken_words": "abeg"},
+              captions={"tiktok": "old"}, handle="")
+    asked = {}
+
+    def fake(item, cfg, n, avoid):
+        asked["avoid"] = avoid
+        return ["omo this one don pass me", "who else dey go through this?"]
+
+    monkeypatch.setattr(highlight, "suggest_captions", fake)
+    res = client.post("/api/clips/11-01/caption-ideas", json={"avoid": ["earlier idea"]})
+    assert res.status_code == 200 and asked["avoid"] == ["earlier idea"]
+    ideas = res.json()["ideas"]
+    assert [i["caption"] for i in ideas] == ["omo this one don pass me", "who else dey go through this?"]
+    assert ideas[0]["captions"]["tiktok"].startswith("omo this one don pass me")
+    assert "#naija" in ideas[0]["captions"]["tiktok"] and len(ideas[0]["captions"]["x"]) <= 280
+    assert db.get("11-01")["captions"] == {"tiktok": "old"}                # nothing was saved
+    page = client.get("/jobs/11-01").text
+    assert "Suggest captions" in page and "/api/clips/11-01/caption-ideas" in page
+
+    def broken(item, cfg, n, avoid):
+        raise RuntimeError("503")
+
+    monkeypatch.setattr(highlight, "suggest_captions", broken)
+    assert client.post("/api/clips/11-01/caption-ideas", json={}).status_code == 502
+    assert client.post("/api/clips/nope/caption-ideas", json={}).status_code == 404

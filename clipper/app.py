@@ -321,6 +321,33 @@ async def retry_clips(request: Request):
     return _redirect(str(form.get("back") or "/library?tab=failed"))
 
 
+@app.post("/api/clips/{video_id}/caption-ideas")
+async def caption_ideas(request: Request, video_id: str):
+    """A fresh set of caption options for one clip (the clip page's Suggest captions). Nothing is
+    saved: each idea comes with the full caption text per platform (credit and hashtags included)
+    for the page to drop into the caption boxes."""
+    job = _job_or_404(video_id)
+    if job["kind"] != "clip":
+        raise HTTPException(409, "Only clips have captions")
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    avoid = [str(a) for a in (body.get("avoid") or []) if isinstance(a, str)][:60]
+    cfg = config.load()
+    clip = job.get("clip") or {}
+    item = {"title": (job.get("info") or {}).get("title", ""), "spoken_words": (clip.get("spoken_words") or "")[:800],
+            "hook": clip.get("hook", ""), "reason": clip.get("reason", "")}
+    try:
+        ideas = await asyncio.to_thread(highlight.suggest_captions, item, cfg, 6, avoid)
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(502, f"Gemini couldn't suggest captions right now ({str(err)[:160]}). "
+                                 "Try again in a minute.") from err
+    creator = config.creator_for(cfg, job.get("handle"))
+    return {"ideas": [{"caption": text, "captions": worker.build_captions({**clip, "caption": text}, cfg, creator)}
+                      for text in ideas]}
+
+
 @app.post("/clips/rewrite-captions")
 async def rewrite_captions(request: Request):
     """Gemini rewrites the post caption of each ticked clip in the relatable Nigerian voice (one

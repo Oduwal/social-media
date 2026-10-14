@@ -338,6 +338,45 @@
 <section class="card">
   <h2>Captions &amp; platforms</h2>
   <form method="post" action="/jobs/{{ job.video_id }}/approve" id="postform">
+    <div class="card" id="ideabox" style="margin-bottom:12px">
+      <div class="row">
+        <button type="button" class="btn small primary" id="ideago">✨ Suggest captions</button>
+        <span class="muted small" id="ideamsg">Gemini writes 6 options in a relatable Nigerian voice. Click one to put it in the boxes below, and ask again until one is right. Nothing is saved until you save or post.</span>
+      </div>
+      <div id="idealist" style="display:grid; gap:6px; margin-top:8px"></div>
+    </div>
+    <script>
+    (function () {
+      var seen = [], list = document.getElementById("idealist"), msg = document.getElementById("ideamsg"),
+          go = document.getElementById("ideago");
+      go.addEventListener("click", function () {
+        go.disabled = true; msg.textContent = "Asking Gemini…";
+        fetch("/api/clips/{{ job.video_id }}/caption-ideas", {method: "POST", headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({avoid: seen})})
+          .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.detail || r.statusText); return d; }); })
+          .then(function (d) {
+            msg.textContent = "Click one to use it. Ask again for more.";
+            d.ideas.forEach(function (idea) {
+              seen.push(idea.caption);
+              var b = document.createElement("button");
+              b.type = "button"; b.className = "btn"; b.style.textAlign = "left"; b.textContent = idea.caption;
+              b.addEventListener("click", function () {
+                ["tiktok", "instagram", "x"].forEach(function (p) {
+                  var box = document.getElementById("caption_" + p);
+                  if (box && idea.captions[p] !== undefined) { box.value = idea.captions[p]; box.dispatchEvent(new Event("input", {bubbles: true})); }
+                });
+                list.querySelectorAll("button").forEach(function (x) { x.style.outline = ""; });
+                b.style.outline = "2px solid #4da3ff";
+                msg.textContent = "Used. Remember to Save or Approve & Post to keep it.";
+              });
+              list.prepend(b);
+            });
+          })
+          .catch(function (e) { msg.textContent = "Couldn't get captions: " + e.message; })
+          .finally(function () { go.disabled = false; });
+      });
+    })();
+    </script>
     {% for p in platforms %}
       <div class="cap">
         {% set conn = (connections or {}).get(p) %}

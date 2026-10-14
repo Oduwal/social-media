@@ -329,3 +329,41 @@ def rewrite_captions(clips: list, cfg: dict) -> dict:
     parsed = resp.parsed or _Rewrites.model_validate_json(resp.text)
     wanted = {c["id"] for c in clips}
     return {r.id: clean_caption(r.caption) for r in parsed.captions if r.id in wanted and clean_caption(r.caption)}
+
+
+class _Ideas(BaseModel):
+    captions: list[str]
+
+
+IDEAS_PROMPT = """You write post captions for a short clip of a Nigerian creator, for TikTok, Instagram Reels and X.
+
+The clip: {clip}
+
+{rules}
+
+Write {n} DIFFERENT captions for this clip, each with a different angle: a funny one, a relatable one, a
+shocking or hot-take one, a question that makes people comment, and so on. Vary the wording and length (all
+short). Do not repeat or lightly reword any of these, which were already shown:
+{avoid}"""
+
+
+def suggest_captions(item: dict, cfg: dict, n: int = 6, avoid: list = None) -> list:
+    """`n` different post captions for one clip ({title, spoken_words, hook, reason}), none repeating
+    those in `avoid`. One small text request."""
+    from google.genai import types
+
+    prompt = IDEAS_PROMPT.format(clip=json.dumps(item, ensure_ascii=False), rules=CAPTION_RULES, n=n,
+                                 avoid=json.dumps(list(avoid or [])[-30:], ensure_ascii=False))
+    resp = make_client(cfg).models.generate_content(
+        model=cfg["gemini"]["model"], contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json", response_schema=_Ideas,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)))
+    parsed = resp.parsed or _Ideas.model_validate_json(resp.text)
+    seen, out = {c.lower() for c in (avoid or [])}, []
+    for raw in parsed.captions:
+        text = clean_caption(raw)
+        if text and text.lower() not in seen:
+            seen.add(text.lower())
+            out.append(text)
+    return out[:n]
