@@ -334,6 +334,10 @@
   </div>
 </div>
 
+{% if (job.info or {}).get("intro_error") %}
+<p class="banner warn small">The AI intro couldn't be added, so this clip was finished without it ({{ job.info.intro_error }}).
+  Run Batch edit on it again to retry.</p>
+{% endif %}
 {% if job.captions %}
 <section class="card">
   <h2>Captions &amp; platforms</h2>

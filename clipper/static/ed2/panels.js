@@ -371,7 +371,63 @@ export function renderAI() {
     } catch (err) { status.textContent = err.message; }
     go.disabled = false;
   });
-  box.replaceChildren(ta, go, status);
+  box.replaceChildren(ta, go, status, imageIdeas());
+}
+
+// Image ideas: moments where a picture would help, with a search link and an "Add image" that
+// uploads your picture and drops it on the timeline at that moment (an overlay you can still move).
+function imageIdeas() {
+  const wrap = el("div", { class: "isec" });
+  const go = el("button", { class: "btn" }, "🖼 Suggest images for what's said");
+  const status = el("p", { class: "muted small" }, "Gemini reads what is said and points at the moments a picture would help (a person, place, brand, headline). The first time can take a minute or two.");
+  const list = el("div", { style: { display: "grid", gap: "8px", marginTop: "8px" } });
+  const upload = async (file) => {
+    const fd = new FormData(); fd.append("file", file);
+    const r = await fetch(`/api/clips/${D.id}/upload`, { method: "POST", body: fd });
+    const body = await r.json();
+    if (!r.ok) throw new Error(body.detail || r.status);
+    D.assets[body.id] = body.asset;
+    renderMedia();
+    return body.id;
+  };
+  go.addEventListener("click", async () => {
+    go.disabled = true; status.textContent = "Listening to the clip…";
+    try {
+      const r = await fetch(`/api/clips/${D.id}/overlay-ideas`, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project: S.project }) });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.detail || r.status);
+      list.replaceChildren();
+      status.textContent = body.ideas.length ? "Search for each picture, then add it where it's said. Undo (Ctrl+Z) takes an image back out."
+        : "Nothing in this clip needs a picture.";
+      body.ideas.forEach((idea) => {
+        const pick = el("input", { type: "file", accept: "image/*", hidden: true });
+        pick.addEventListener("change", async () => {
+          if (!pick.files.length) return;
+          try {
+            const aid = await upload(pick.files[0]);
+            const item = A.addAsset(aid, idea.start);
+            if (item) {
+              item.start = idea.start; item.dur = idea.dur; item.y = H * 0.3; item.anim_in = "pop"; item.anim_out = "fade";
+              changed("props"); renderDesign();
+              status.textContent = `Added “${idea.label}” at ${fmt(idea.start)}. Drag it on the video to move or resize it.`;
+            }
+          } catch (err) { status.textContent = "Couldn't add it: " + err.message; }
+          pick.value = "";
+        });
+        list.append(el("div", { class: "card", style: { padding: "8px" } },
+          el("div", {}, el("b", {}, idea.label), el("span", { class: "muted small" }, `  at ${fmt(idea.start)} · ${idea.dur}s`)),
+          el("div", { class: "muted small" }, idea.why),
+          el("div", { class: "row", style: { marginTop: "6px" } },
+            el("a", { class: "btn small", target: "_blank", rel: "noopener",
+              href: "https://www.google.com/search?tbm=isch&q=" + encodeURIComponent(idea.search) }, "Search images ↗"),
+            el("button", { class: "btn small primary", onclick: () => pick.click() }, "Add image…"), pick)));
+      });
+    } catch (err) { status.textContent = err.message; }
+    go.disabled = false;
+  });
+  wrap.append(el("h4", {}, "Image ideas"), go, status, list);
+  return wrap;
 }
 
 on("select", () => { renderDesign(); renderLayers(); });

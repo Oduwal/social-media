@@ -68,6 +68,8 @@ def clean_spec(form) -> dict:
     spec = {
         "captions": _pick(get("captions"), CAPTIONS, "none"),
         "gemini_fix": bool(get("gemini_fix")),
+        "ai_intro": bool(get("ai_intro")),                       # a spoken hook over the first seconds
+        "intro_text": str(get("intro_text") or "").strip()[:120],  # empty = Gemini writes one per clip
         "caption_position": _pick(get("caption_position"), CAPTION_POSITIONS, "bottom"),
         "title_source": _pick(get("title_source"), TITLE_SOURCES, "none"),
         "title_text": str(get("title_text") or "").strip()[:120],
@@ -101,8 +103,12 @@ def title_for(spec: dict, job: dict) -> str:
     return text[:200]
 
 
-def build_edit(spec: dict, job: dict, job_dir: Path, cfg: dict) -> dict:
-    """The clip's edit for these answers: whole clip, captions and title as asked."""
+INTRO_PAD = 0.25  # seconds of room after the spoken intro before the clip's own words come back
+
+
+def build_edit(spec: dict, job: dict, job_dir: Path, cfg: dict, intro: dict = None) -> dict:
+    """The clip's edit for these answers: whole clip, captions and title as asked. `intro` (from
+    intro.make_intro) adds the hook as on-screen text and keeps captions out of its way."""
     base = job_dir / "transformed.mp4"
     duration = media.duration(base)
     tracks = render.music_names()
@@ -126,8 +132,55 @@ def build_edit(spec: dict, job: dict, job_dir: Path, cfg: dict) -> dict:
         end = min(duration, spec["title_seconds"]) if spec["title_seconds"] else duration
         texts.append({"text": title, "start": 0.0, "end": max(end, 1.0), "style": spec["title_style"],
                       "position": spec["title_position"], "size": TITLE_SIZES.get(spec["title_style"], 64), "animation": "pop"})
+    if intro:
+        until = intro["duration"] + INTRO_PAD
+        kept = []
+        for t in texts:
+            if t.get("auto") and t["start"] < until:   # the narrator is speaking: no captions yet
+                if t["end"] - until < 0.3:
+                    continue
+                t = {**t, "start": round(until, 3), "words": None}
+            kept.append(t)
+        texts = kept
+        place = "top" if spec["title_position"] == "middle" else "middle"   # not on top of the title
+        texts.append({"text": intro["text"], "start": 0.0, "end": round(until, 3), "style": spec["title_style"],
+                      "position": place, "size": TITLE_SIZES.get(spec["title_style"], 64), "animation": "pop"})
     edit["texts"] = texts
     return render.clean_edit(edit, duration, tracks)
+
+
+def build_project(spec: dict, job: dict, job_dir: Path, cfg: dict) -> tuple:
+    """(editor project, intro info) for a batch with an AI intro. A project, not a plain edit, so
+    the voice, the hook and everything else open in the editor for you to change or add images to."""
+    from . import editor2, intro as intro_mod, project as P
+
+    made = intro_mod.make_intro(job, job_dir, cfg, spec.get("intro_text", ""))
+    v1 = build_edit(spec, job, job_dir, cfg, intro=made)
+    known = editor2.known_assets(job_dir)
+    track = v1["music"]["track"]
+    music_asset = (f"music:{track}", known[f"music:{track}"]) if track and f"music:{track}" in known else None
+    proj = P.from_v1(v1, known["clip"], music_asset)
+
+    aid = f"upload:{made['file']}"
+    proj["assets"][aid] = known[aid]
+    proj["tracks"].append({"id": "intro", "kind": "audio", "name": "Intro voice", "items": [
+        {"asset": aid, "start": 0, "dur": made["duration"], "in": 0, "volume": 1.3, "fade_in": 0, "fade_out": 0.05,
+         "music": False, "duck": False}]})
+
+    # the clip's own sound sits low under the narrator, then comes back: split the clip there
+    main = proj["tracks"][0]["items"][0]
+    length = main["out"] - main["in"]
+    cut = round(min(made["duration"] + INTRO_PAD, length - 1.0), 3)
+    if cut > 0.5:
+        zoom = (main.get("kf") or {}).get("zoom")
+        mid = P.at(zoom, cut, 1.0) if zoom else None
+        first = {**main, "id": "c1", "out": round(main["in"] + cut, 3), "volume": round(main["volume"] * 0.18, 3)}
+        second = {**main, "id": "c2", "in": round(main["in"] + cut, 3)}
+        if zoom:
+            first["kf"] = {**main["kf"], "zoom": [[0, zoom[0][1]], [cut, mid]]}
+            second["kf"] = {**main["kf"], "zoom": [[0, mid], [round(length - cut, 3), zoom[-1][1]]]}
+        proj["tracks"][0]["items"] = [first, second]
+    return editor2.clean(proj, job_dir), made
 
 
 def watermark_cfg(spec: dict, cfg: dict) -> dict:

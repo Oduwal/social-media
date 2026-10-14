@@ -21,7 +21,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import agentrouter, batch_edit, captions, catalog, cli_lock, config, db, downloader, editor2, gemini, media, monitor, music
 from . import platforms, project, render, render2, shotcut, studio
-from . import flow_robot, highlight, transform_adapter, trending, worker
+from . import flow_robot, highlight, intro, transform_adapter, trending, worker
 
 HERE = Path(__file__).resolve().parent
 MEDIA_FILES = {"source.mp4": "video/mp4", "highlight.mp4": "video/mp4", "transformed.mp4": "video/mp4",
@@ -426,6 +426,69 @@ async def batch_edit_delete_preset(request: Request):
     form = await request.form()
     batch_edit.delete_preset(str(form.get("preset_name") or ""))
     return {"ok": True, "presets": batch_edit.presets()}
+
+
+INTRO_PREVIEW = config.DATA_DIR / "intro_preview"
+
+
+@app.post("/clips/batch-edit/intro-preview")
+async def batch_edit_intro_preview(request: Request):
+    """Write and speak the intro for the first ticked clip so it can be heard before applying."""
+    form = await request.form()
+    ids = [i for i in form.getlist("ids") if JOB_ID.match(i)]
+    job = next((j for j in (db.get(i) for i in ids) if j and j["kind"] == "clip"), None)
+    if job is None:
+        raise HTTPException(400, "Tick at least one clip")
+    text = str(form.get("intro_text") or "").strip()[:120]
+    cfg = config.load()
+    clip = job.get("clip") or {}
+    try:
+        if not text:
+            item = {"title": (job.get("info") or {}).get("title", ""),
+                    "spoken_words": (clip.get("spoken_words") or "")[:800],
+                    "hook": clip.get("hook", ""), "reason": clip.get("reason", "")}
+            text = await asyncio.to_thread(intro.write_hook, item, cfg, str(job.get("handle") or "").lstrip("@"))
+        path = await asyncio.to_thread(intro.speak, text, INTRO_PREVIEW)
+        seconds = await asyncio.to_thread(media.duration, path)
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(502, f"Couldn't make the intro right now ({str(err)[:200]}). Try again in a minute.") from err
+    return {"text": intro.clean_hook(text), "seconds": round(seconds, 1),
+            "url": f"/intro-preview/{path.name}?t={int(time.time())}"}
+
+
+@app.get("/intro-preview/{name}")
+def intro_preview_file(name: str):
+    if not re.fullmatch(r"ai_intro\.(wav|mp3)", name) or not (INTRO_PREVIEW / name).exists():
+        raise HTTPException(404)
+    return FileResponse(INTRO_PREVIEW / name, media_type="audio/wav" if name.endswith(".wav") else "audio/mpeg")
+
+
+@app.post("/api/clips/{video_id}/overlay-ideas")
+async def overlay_ideas(request: Request, video_id: str):
+    """Moments in the clip where a picture would help, with what to search for (editor's AI tab)."""
+    job, job_dir = _clip_dir(video_id)
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    offset, length = 0.0, media.duration(job_dir / "transformed.mp4")
+    try:  # ideas are timed on the edited timeline, which may start part-way into the clip
+        main = next(t for t in (body.get("project") or {}).get("tracks", []) if t.get("kind") == "main")
+        first = main["items"][0]
+        offset = float(first.get("in", 0))
+        length = max(1.0, sum((i["out"] - i["in"]) / (i.get("speed") or 1) for i in main["items"]))
+    except (StopIteration, KeyError, IndexError, TypeError, ValueError):
+        pass
+    cfg = config.load()
+    try:
+        words = await asyncio.to_thread(intro.words_for_clip, job_dir, offset, length)
+        ideas = await asyncio.to_thread(intro.overlay_ideas, words, length, cfg)
+    except (captions.CaptionError, studio.StudioError, media.MediaError) as err:
+        raise HTTPException(502, str(err)) from err
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(502, f"Gemini couldn't look at the clip right now ({str(err)[:160]}). "
+                                 "Try again in a minute.") from err
+    return {"ideas": ideas, "words": len(words)}
 
 
 @app.post("/clips/batch-edit")

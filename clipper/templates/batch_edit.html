@@ -120,6 +120,19 @@
   </section>
 
   <section>
+    <h2>AI intro <span class="muted small">(a spoken hook over the first seconds)</span></h2>
+    <label class="row"><input type="checkbox" name="ai_intro"> Add a narrator intro to each clip</label>
+    <p class="muted small">Gemini writes a one-line hook from what the clip says; a deep Nigerian male voice reads it, a bit fast,
+      with the same line on screen. The clip's own sound dips under it, and the voice, text and timing stay editable in the editor.</p>
+    <input name="intro_text" placeholder="Optional: use this line for every clip (empty = Gemini writes one per clip)" style="width:100%">
+    <div class="row small" style="margin-top:6px">
+      <button type="button" class="btn small" id="intropreview">▶ Hear it on the first clip</button>
+      <span class="muted" id="introstatus"></span>
+    </div>
+    <audio id="introaudio" controls hidden style="width:100%; margin-top:6px"></audio>
+  </section>
+
+  <section>
     <h2>Music</h2>
     <select name="music">{% for k, label in opts.music.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select>
   </section>
@@ -289,6 +302,20 @@ sel.onchange = () => document.getElementById("presetload").onclick();
 document.getElementById("presetdel").onclick = async () => {
   if (!sel.value || !confirm(`Delete the saved look “${sel.value}”?`)) return;
   PRESETS = (await post("/clips/batch-edit/preset/delete", {preset_name: sel.value})).presets; fillPresets(); msg.textContent = "Deleted.";
+};
+
+document.getElementById("intropreview").onclick = async () => {
+  const st = document.getElementById("introstatus"), au = document.getElementById("introaudio"), btn = document.getElementById("intropreview");
+  btn.disabled = true; st.textContent = "Writing and recording…";
+  try {
+    const fd = new FormData(form);
+    const r = await fetch("/clips/batch-edit/intro-preview", {method: "POST", body: fd});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    st.textContent = `“${d.text}” (${d.seconds}s)`;
+    au.src = d.url; au.hidden = false; au.play().catch(() => {});
+  } catch (e) { st.textContent = "Couldn't: " + e.message; }
+  btn.disabled = false;
 };
 
 fillPresets();

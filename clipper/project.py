@@ -452,6 +452,7 @@ def _clean_item(kind: str, raw: dict, assets: dict, used: set):
 V1_POSITIONS = {"top": 260, "middle": H // 2, "bottom": H - 420}
 V1_FONTS = {"classic": "Arial Black", "yellow": "Arial Black", "box": "Arial", "minimal": "Segoe UI",
             "neon": "Arial Black", "caption": "Arial Black", "pill": "Arial Black"}
+V1_QUALITY = {"draft": "small", "standard": "standard", "high": "high", "max": "high"}
 V1_ANIM = {"pop": ("pop", "none"), "fade": ("fade", "fade"), "bounce": ("bounce", "none"),
            "slide": ("slide_up", "fade")}
 
@@ -466,18 +467,26 @@ def from_v1(edit: dict, clip_asset: dict, music_asset: tuple = None) -> dict:
         kf["zoom"] = [[0, 1.0], [round(length, 3), 1.12]]
     elif zoom == "slow_out":
         kf["zoom"] = [[0, 1.12], [round(length, 3), 1.0]]
+    from .render import TEXT_STYLES
+
     texts = []
     for t in edit.get("texts") or []:
         y = V1_POSITIONS.get(t.get("position"), 260)
         anim_in, anim_out = V1_ANIM.get(t.get("animation"), ("none", "none"))
         effect = t.get("animation") if t.get("animation") in ("highlight", "words", "typewriter") else "none"
         style = t.get("style", "classic")
+        # the look comes from the style table the renderer uses, so a title looks the same here
+        font, _, outline_col, width, border, shadow, bold = TEXT_STYLES.get(style, TEXT_STYLES["classic"])
+        boxed = border == 3
         texts.append({"text": t["text"], "start": t["start"], "dur": round(t["end"] - t["start"], 4),
                       "x": W / 2, "y": y + (0 if t.get("position") == "middle" else
                                             (t.get("size", 72) * 0.6 if t.get("position") == "top" else -t.get("size", 72) * 0.6)),
-                      "font": V1_FONTS.get(style, "Arial Black"), "size": int(t.get("size", 72)),
-                      "color": t.get("color", "#FFFFFF"), "outline": 0 if style in ("box", "pill", "minimal") else 6,
-                      "box": style in ("box", "pill"), "box_color": "#111111", "shadow": 2,
+                      "font": font if font in FONTS else V1_FONTS.get(style, "Arial Black"),
+                      "size": int(t.get("size", 72)),
+                      "color": t.get("color", "#FFFFFF"), "outline": 0 if boxed else width,
+                      "outline_color": outline_col if not boxed else "#000000",
+                      "box": boxed, "box_color": outline_col if boxed else "#111111", "shadow": shadow,
+                      "bold": bool(bold),
                       "effect": effect, "accent": t.get("accent", "#FFE600"), "words": t.get("words"),
                       "anim_in": anim_in, "anim_out": anim_out, "auto": bool(t.get("auto"))})
     assets = {"clip": clip_asset}
@@ -501,7 +510,8 @@ def from_v1(edit: dict, clip_asset: dict, music_asset: tuple = None) -> dict:
     return {"version": VERSION,
             "look": {"filter": edit.get("filter", "none"), "fade_in": edit.get("fade_in", 0),
                      "fade_out": edit.get("fade_out", 0)},
-            "export": {"height": 1920, "fps": 30, "quality": "standard"},
+            "export": {"height": 1920, "fps": 30,
+                       "quality": V1_QUALITY.get(edit.get("quality"), "standard")},
             "ducking": music.get("ducking", True), "assets": assets, "tracks": tracks}
 
 
