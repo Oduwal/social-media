@@ -22,8 +22,8 @@ downloader:
 trending:
   # Gemini suggests trending TikTok sounds for each finished clip; the one you choose is
   # attached to the TikTok post (licensed, and the clip shows up on the sound's page).
-  enabled: true
-  countries: ["US", "NG"]     # charts to pick from (2-letter country codes)
+  enabled: false              # off: saves Gemini quota (TikTok drafts get their sound in the app)
+  countries: ["US", "NG"]    # charts to pick from (2-letter country codes)
   date_range: "7DAY"          # 1DAY, 7DAY, 30DAY or 90DAY
   candidates_per_country: 10  # how many top sounds per chart Gemini listens to (~$0.02 per clip)
   sound_volume: 35            # 0-100, the trending sound under the voice on TikTok
@@ -31,13 +31,14 @@ trending:
 
 clip:
   min_seconds: 15
-  max_seconds: 45
+  max_seconds: 60
 
 gemini:
   project_id: "project-8b3114be-add7-457c-84b"
   location: "global"          # 3.x models are NOT served from us-central1
   model: "gemini-3.5-flash"   # do not use gemini-2.5-*: retired 2026-10-20
   service_account_key: 'C:\Users\ODUWA\Pictures\project-8b3114be-add7-457c-84b-d3079480ce6e.json'
+  fallback_models: ["gemini-flash-latest", "gemini-3-flash-preview", "gemini-3.6-flash"]   # tried in order if the model above fails on every key (no lite models)
   backends: ["aistudio"]      # vertex has no billing; use only the free AI Studio key
 
 # Which engine picks the highlights.
@@ -84,7 +85,7 @@ music:
 
 posting:
   service: "direct"           # "direct" = Clipper posts itself (Connections page); "upload_post" = via Upload-Post
-  tiktok_mode: "direct"       # "inbox" = sent to your TikTok inbox as a draft (you add a sound and post in the app)
+  tiktok_mode: "inbox"        # "inbox" = sent to your TikTok inbox as a draft (you add a sound and post in the app)
                               # "direct" = posted automatically (private-only until TikTok audits your app)
   graph_api_version: "v24.0"  # Meta Graph API version for Instagram
 
