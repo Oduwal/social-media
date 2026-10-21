@@ -1,10 +1,76 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Clipper</title>
-<style>body{font-family:system-ui,sans-serif;max-width:640px;margin:48px auto;padding:0 16px;line-height:1.6}</style></head>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Clipper | Highlight clips from long videos</title>
+<meta name="description" content="Clipper turns long videos into short highlight clips with captions, then posts them to your own TikTok account after you approve each one.">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/svg+xml" href="/icon.svg">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/style.css">
+</head>
 <body>
-<h1>Clipper</h1>
-<p>Clipper is a personal desktop tool that cuts highlight clips from videos and posts them to the owner's own social media accounts. Every post is reviewed and approved by the account owner before it is sent.</p>
-<p>It uses TikTok Login Kit to connect the owner's account and the Content Posting API to upload the owner's own videos.</p>
-<ul><li><a href="/privacy.html">Privacy Policy</a></li><li><a href="/terms.html">Terms of Service</a></li></ul>
-</body></html>
+<header class="site"><div class="wrap">
+  <a class="brand" href="/"><img src="/icon-1024.png" alt="">Clipper</a>
+  <nav><a href="#how">How it works</a><a href="#features">Features</a><a href="#faq">FAQ</a><a href="/privacy.html">Privacy</a></nav>
+</div></header>
+
+<main class="wrap">
+  <div class="hero">
+    <div>
+      <h1>Turn long videos into short clips worth posting.</h1>
+      <p>Clipper finds the best moments in your long-form videos, cuts them into vertical clips with captions, and posts them to your own TikTok account once you approve them.</p>
+      <a class="btn" href="#how">See how it works</a>
+    </div>
+    <img src="/icon-1024.png" alt="Clipper app icon">
+  </div>
+
+  <section id="how">
+    <h2>How it works</h2>
+    <p class="lead">Every clip goes through you. Nothing is posted until you have watched it and pressed approve.</p>
+    <div class="grid">
+      <div class="card"><div class="step">Step 1</div><h3>Add a video</h3><p>Point Clipper at a long video you own: a stream, podcast, interview or vlog.</p></div>
+      <div class="card"><div class="step">Step 2</div><h3>Review the highlights</h3><p>Clipper suggests the strongest moments, cut to vertical 9:16 with captions. Watch each one, edit the caption, or throw it away.</p></div>
+      <div class="card"><div class="step">Step 3</div><h3>Approve and post</h3><p>Choose who can see the post and whether comments, duets and stitches are allowed, then approve. Clipper uploads it to your connected TikTok account.</p></div>
+    </div>
+  </section>
+
+  <section id="features">
+    <h2>Features</h2>
+    <p class="lead">Built for creators who make long videos and want consistent short-form output without hours of editing.</p>
+    <div class="grid">
+      <div class="card"><h3>Highlight detection</h3><p>AI looks through the full video and picks out the moments people actually react to.</p></div>
+      <div class="card"><h3>Vertical reframing</h3><p>Clips are reframed for phone screens so the speaker stays in shot.</p></div>
+      <div class="card"><h3>Captions</h3><p>Burned-in captions and suggested post captions, which you can rewrite before posting.</p></div>
+      <div class="card"><h3>Clip library</h3><p>Track which clips are ready, which are waiting for review and which have been posted.</p></div>
+      <div class="card"><h3>Post to TikTok</h3><p>Connect your account with Login Kit for TikTok and publish through the official Content Posting API.</p></div>
+      <div class="card"><h3>You stay in control</h3><p>Privacy level, comment, duet and stitch settings are chosen by you on every post.</p></div>
+    </div>
+  </section>
+
+  <section id="tiktok">
+    <h2>TikTok integration</h2>
+    <p class="lead">Clipper uses TikTok's official developer products only.</p>
+    <div class="grid">
+      <div class="card"><h3>Login Kit</h3><p>You sign in with TikTok and grant permission. Clipper never sees your TikTok password.</p></div>
+      <div class="card"><h3>Content Posting API</h3><p>Approved clips are uploaded to the account you connected and to no other account.</p></div>
+      <div class="card"><h3>Disconnect any time</h3><p>Disconnecting in Clipper deletes the stored tokens. You can also revoke access in TikTok's settings.</p></div>
+    </div>
+  </section>
+
+  <section id="faq">
+    <h2>FAQ</h2>
+    <details><summary>Does Clipper post without asking me?</summary><p>No. Each clip is posted only after you review and approve it.</p></details>
+    <details><summary>Which videos can I use?</summary><p>Only videos you own or have the rights to post. You are responsible for following TikTok's Terms of Service, Community Guidelines and Music Usage Confirmation.</p></details>
+    <details><summary>What TikTok data does Clipper store?</summary><p>Your TikTok open ID, display name and the access tokens needed to post. See the <a href="/privacy.html">Privacy Policy</a> for details.</p></details>
+    <details><summary>How do I contact you?</summary><p>Email <a href="mailto:founder@software.atomic.ng">founder@software.atomic.ng</a>.</p></details>
+  </section>
+</main>
+
+<footer class="site"><div class="wrap">
+  <span>&copy; 2026 Clipper</span>
+  <span><a href="/privacy.html">Privacy Policy</a><a href="/terms.html">Terms of Service</a><a href="mailto:founder@software.atomic.ng">Contact</a></span>
+</div></footer>
+</body>
+</html>
