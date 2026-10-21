@@ -481,7 +481,7 @@ async def overlay_ideas(request: Request, video_id: str):
         pass
     cfg = config.load()
     try:
-        words = await asyncio.to_thread(intro.words_for_clip, job_dir, offset, length)
+        words = await asyncio.to_thread(intro.words_for_clip, job_dir, offset, length, cfg)
         ideas = await asyncio.to_thread(intro.overlay_ideas, words, length, cfg)
     except (captions.CaptionError, studio.StudioError, media.MediaError) as err:
         raise HTTPException(502, str(err)) from err
@@ -777,14 +777,14 @@ def editor2_peaks(video_id: str, asset_id: str):
 
 @app.post("/api/clips/{video_id}/captions2")
 async def editor2_captions(request: Request, video_id: str):
-    """Word-timed captions placed on the edited timeline (on-device speech-to-text)."""
+    """Word-timed captions placed on the edited timeline (Gemini listens; on-device speech-to-text as the fallback)."""
     job, job_dir = _clip_dir(video_id)
     body = await _json(request)
     try:
         proj = editor2.clean(body.get("project") or {}, job_dir)
         style = body.get("style") if isinstance(body.get("style"), dict) else catalog.CAPTIONS[0]["style"]
         items = await asyncio.to_thread(editor2.caption_items, job_dir, proj, style,
-                                        (job.get("clip") or {}).get("spoken_words") or "")
+                                        (job.get("clip") or {}).get("spoken_words") or "", config.load())
     except (editor2.EditorError, captions.CaptionError, studio.StudioError, media.MediaError) as err:
         raise HTTPException(502, str(err)) from err
     return {"items": items}
@@ -873,7 +873,7 @@ def editor(request: Request, video_id: str):
 
 @app.post("/api/clips/{video_id}/captions")
 async def auto_captions(request: Request, video_id: str):
-    """Word-timed captions for the trimmed clip (on-device speech-to-text; a minute or two)."""
+    """Word-timed captions for the trimmed clip (Gemini listens; on-device speech-to-text as the fallback)."""
     job = _job_or_404(video_id)
     job_dir = config.job_dir(video_id)
     if job["kind"] != "clip" or not (job_dir / "transformed.mp4").exists():
@@ -887,7 +887,7 @@ async def auto_captions(request: Request, video_id: str):
         raise HTTPException(400, "Bad trim") from err
     try:
         texts = await asyncio.to_thread(captions.captions_for, job_dir, start, end,
-                                      (job.get("clip") or {}).get("spoken_words") or "")
+                                      (job.get("clip") or {}).get("spoken_words") or "", config.load())
     except (captions.CaptionError, studio.StudioError, media.MediaError) as err:
         raise HTTPException(502, str(err)) from err
     return {"texts": texts}

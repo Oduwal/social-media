@@ -224,7 +224,7 @@ def test_filmstrip_and_waveform(client):
 def test_captions_land_where_the_words_are_after_cuts(tmp_path, monkeypatch):
     from clipper import captions
     words = [{"text": w, "start": s, "end": s + 0.3} for w, s in (("one", 0.5), ("two", 1.0), ("three", 3.2), ("four", 3.6))]
-    monkeypatch.setattr(captions, "transcribe", lambda job_dir, reference="": words)
+    monkeypatch.setattr(captions, "transcribe", lambda job_dir, reference="", cfg=None: words)
     p = P.clean(proj(tracks=[{"kind": "main", "items": [
         {"asset": "clip", "in": 0, "out": 2}, {"asset": "clip", "in": 3, "out": 5, "speed": 2}]}]), {"clip": CLIP})
     items = editor2.caption_items(tmp_path, p, {"font": "Anton", "effect": "highlight"})
@@ -292,3 +292,48 @@ def test_text_opacity_and_translucent_box():
     assert opaque["box_opacity"] == 1.0 and render2._text_style(0, opaque).split(",")[5] == "&H00FFFFFF"
     # text opacity is applied in the event body (the whole title goes translucent)
     assert "alpha" in "\n".join(render2.text_events(0, it)).lower()
+
+
+# ------------------------------------------------------------------ whole-picture effects and vignette
+
+def test_clean_keeps_known_effects_and_clamps_the_vignette():
+    p = P.clean(proj(look={"filter": "warm", "effect": "vhs", "vignette": 7}), {"clip": CLIP})
+    assert p["look"]["effect"] == "vhs" and p["look"]["vignette"] == 1.0
+    p = P.clean(proj(look={"effect": "explode", "vignette": "lots"}), {"clip": CLIP})
+    assert p["look"]["effect"] == "none" and p["look"]["vignette"] == 0.0
+    assert P.clean(proj(), {"clip": CLIP})["look"]["effect"] == "none"          # older projects have neither
+
+
+def _corner_and_centre(video, tmp_path):
+    """Brightness (0-255) of the top-left corner and of the middle of the first frame."""
+    import subprocess
+
+    def mean(crop):
+        raw = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(video), "-frames:v", "1", "-vf",
+                              f"crop={crop},scale=1:1", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+                             capture_output=True, check=True).stdout
+        return raw[0]
+    return mean("60:60:0:0"), mean("60:60:330:630")
+
+
+@needs_ffmpeg
+def test_vignette_darkens_the_corners_and_leaves_the_middle(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
+    import subprocess
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=white:size=720x1280:rate=30:duration=2",
+                    "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:a", "aac", "-c:v", "libx264",
+                    "-pix_fmt", "yuv420p", "-shortest", str(tmp_path / "transformed.mp4")], check=True)   # flat white: any darkening is the vignette
+    plain = render2.render(P.clean(proj(), {"clip": CLIP}), tmp_path, out_name="plain.mp4")
+    dark = render2.render(P.clean(proj(look={"vignette": 1.0}), {"clip": CLIP}), tmp_path, out_name="vig.mp4")
+    corner0, centre0 = _corner_and_centre(plain, tmp_path)
+    corner1, centre1 = _corner_and_centre(dark, tmp_path)
+    assert corner1 < corner0 * 0.5 and abs(centre1 - centre0) <= 3
+    assert (tmp_path / "data" / "vignettes" / "vignette_100.png").exists()
+
+
+@needs_ffmpeg
+@pytest.mark.parametrize("effect", [k for k in P.VIDEO_FX if k != "none"])
+def test_every_effect_renders(tmp_path, effect):
+    make_clip(tmp_path / "transformed.mp4", seconds=2)
+    out = render2.render(P.clean(proj(look={"effect": effect}), {"clip": CLIP}), tmp_path, out_name=f"{effect}.mp4")
+    assert out.exists() and media.duration(out) == pytest.approx(4.0, abs=0.3)

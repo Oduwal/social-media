@@ -54,7 +54,7 @@ def test_build_edit_and_render_at_two_qualities(tmp_path, monkeypatch):
     job_dir = tmp_path / "job"
     job_dir.mkdir()
     make_clip(job_dir / "transformed.mp4", seconds=5, size="1080x1920")
-    monkeypatch.setattr(captions, "captions_for", lambda d, a, b, ref="": [
+    monkeypatch.setattr(captions, "captions_for", lambda d, a, b, ref="", cfg=None: [
         {"text": "hello there", "start": 0.0, "end": 1.5, "words": [[0.0, 0.7], [0.7, 1.5]], **captions.STYLE}])
     spec = batch_edit.clean_spec({"captions": "words", "title_source": "text", "title_text": "wait for it",
                                   "title_pov": "on", "filter": "warm", "zoom": "slow_in", "fade": "on",

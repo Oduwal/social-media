@@ -248,10 +248,10 @@ def overlay_ideas(words: list, length: float, cfg: dict, n: int = 4) -> list:
     return out[:n]
 
 
-def words_for_clip(job_dir: Path, offset: float, length: float) -> list:
-    """Parakeet's word timings for the clip, shifted so 0 is where the edited video starts."""
+def words_for_clip(job_dir: Path, offset: float, length: float, cfg: dict = None) -> list:
+    """The clip's word timings (Gemini's transcript), shifted so 0 is where the edited video starts."""
     words = []
-    for w in captions.transcribe(job_dir):
+    for w in captions.transcribe(job_dir, cfg=cfg):
         if w["end"] > offset and w["start"] < offset + length:
             words.append({**w, "start": round(max(0.0, w["start"] - offset), 3),
                           "end": round(w["end"] - offset, 3)})

@@ -25,7 +25,7 @@ def test_words_are_grouped_into_short_captions():
 
 
 def test_captions_are_timed_from_the_trim_and_carry_word_timings(tmp_path, monkeypatch):
-    monkeypatch.setattr(captions, "transcribe", lambda job_dir, reference="": WORDS)
+    monkeypatch.setattr(captions, "transcribe", lambda job_dir, reference="", cfg=None: WORDS)
     texts = captions.captions_for(tmp_path, 1.0, 6.0)   # trimmed: starts at 1 s
     assert [t["text"] for t in texts][:2] == ["to Mangolin.", "What is a"]  # words before the trim are left out
     first = texts[0]
@@ -117,3 +117,70 @@ def test_gemini_wording_is_ignored_when_it_barely_matches():
 def test_words_only_parakeet_heard_are_kept():
     heard = [_w("we", 0, 0.3), _w("really", 0.3, 0.7), _w("did", 0.7, 1.0), _w("it", 1.0, 1.3)]
     assert [w["text"] for w in captions.correct_words(heard, "We did it")] == ["We", "really", "did", "it"]
+
+
+# ------------------------------------------------------------------ Gemini's transcript
+
+def test_segments_become_ordered_non_overlapping_word_timings():
+    words = captions.words_from_segments(
+        [("abeg na so", 1.0, 2.0), ("wahala dey", 0.2, 0.9), ("", 3.0, 4.0), ("too far", 30.0, 31.0)], 10.0)
+    assert [w["text"] for w in words] == ["wahala", "dey", "abeg", "na", "so", "too", "far"]
+    for a, b in zip(words, words[1:]):
+        assert a["start"] <= a["end"] <= b["start"] + 1e-6          # in order, never overlapping
+    assert words[2]["start"] == pytest.approx(1.0) and words[4]["end"] == pytest.approx(2.0)
+    assert words[-1]["end"] <= 10.0 + 0.1                           # a stretch past the end is pulled in
+
+
+def test_a_backwards_or_missing_end_gets_a_reading_speed():
+    words = captions.words_from_segments([("one two three four", 2.0, 1.0)], 20.0)
+    assert words[0]["start"] == pytest.approx(2.0) and words[-1]["end"] == pytest.approx(2.0 + 0.35 * 4)
+
+
+def test_engine_is_gemini_only_when_a_config_asks_for_it():
+    assert captions.engine_for(None) == "parakeet"                  # the long source video
+    assert captions.engine_for({"captions": {"engine": "gemini"}}) == "gemini"
+    assert captions.engine_for({"captions": {"engine": "parakeet"}}) == "parakeet"
+    assert captions.engine_for({"gemini": {}}) == "gemini"          # a real config without the setting: the default
+
+
+GEMINI_CFG = {"captions": {"engine": "gemini"}, "gemini": {"model": "m"}}
+
+
+@needs_ffmpeg
+def test_gemini_transcript_is_used_cached_and_not_corrected_by_the_reference(tmp_path, monkeypatch):
+    make_clip(tmp_path / "transformed.mp4", seconds=3)
+    heard = [_w("abeg", 0.1, 0.5), _w("na", 0.6, 0.8), _w("so", 0.8, 1.2)]
+    calls = []
+    monkeypatch.setattr(captions, "gemini_words", lambda audio, length, cfg, work: calls.append(1) or heard)
+    monkeypatch.setattr(captions, "_transcribe_all", lambda *a: pytest.fail("Gemini answered; no need for the local model"))
+    assert captions.transcribe(tmp_path, "something else entirely", cfg=GEMINI_CFG) == heard
+    assert captions.transcribe(tmp_path, cfg=GEMINI_CFG) == heard   # second time: the saved transcript
+    assert len(calls) == 1
+    assert json.loads((tmp_path / captions.TRANSCRIPT).read_text(encoding="utf-8"))["engine"] == "gemini"
+
+
+@needs_ffmpeg
+def test_falls_back_to_the_local_recogniser_when_gemini_fails_and_retries_gemini_next_time(tmp_path, monkeypatch):
+    make_clip(tmp_path / "transformed.mp4", seconds=3)
+
+    def broken(*a):
+        raise RuntimeError("quota")
+    monkeypatch.setattr(captions, "gemini_words", broken)
+    monkeypatch.setattr(captions, "_transcribe_all", lambda *a: WORDS)
+    assert captions.transcribe(tmp_path, cfg=GEMINI_CFG) == WORDS
+    assert json.loads((tmp_path / captions.TRANSCRIPT).read_text(encoding="utf-8"))["engine"] == "parakeet"
+    # Gemini is back: the on-device transcript is replaced, and Gemini's is kept from then on
+    heard = [_w("abeg", 0.1, 0.5)]
+    monkeypatch.setattr(captions, "gemini_words", lambda *a: heard)
+    assert captions.transcribe(tmp_path, cfg=GEMINI_CFG) == heard
+    monkeypatch.setattr(captions, "gemini_words", broken)
+    assert captions.transcribe(tmp_path, cfg=GEMINI_CFG) == heard
+
+
+@needs_ffmpeg
+def test_both_engines_failing_says_so(tmp_path, monkeypatch):
+    make_clip(tmp_path / "transformed.mp4", seconds=3)
+    monkeypatch.setattr(captions, "gemini_words", lambda *a: (_ for _ in ()).throw(RuntimeError("no key")))
+    monkeypatch.setattr(captions, "_transcribe_all", lambda *a: (_ for _ in ()).throw(captions.CaptionError("no model")))
+    with pytest.raises(captions.CaptionError, match="Gemini couldn't transcribe it"):
+        captions.transcribe(tmp_path, cfg=GEMINI_CFG)

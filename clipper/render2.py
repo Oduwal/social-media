@@ -241,6 +241,40 @@ def _zoom_filter(item: dict, length: float) -> str:
             f":y='max(0,min(ih-ih/zoom,ih/2-ih/zoom/2-({py})/zoom))':d=1:s={P.W}x{P.H}:fps={P.FPS}")
 
 
+# ffmpeg chains for the whole-picture effects (project.VIDEO_FX); "glow" and the vignette need
+# a second copy of the picture, so build() draws them itself.
+VIDEO_FX_CHAINS = {
+    "grain": "noise=alls=18:allf=t+u",
+    "sharpen": "unsharp=5:5:1.0:5:5:0.0",
+    "vhs": "rgbashift=rh=-5:bh=5,noise=alls=12:allf=t,eq=saturation=1.2:contrast=1.05",
+    "cinema": ("drawbox=x=0:y=0:w=iw:h=ih*0.1:color=black:t=fill,"
+               "drawbox=x=0:y=ih*0.9:w=iw:h=ih*0.1:color=black:t=fill"),
+}
+VIGNETTE_MAX_ALPHA = 0.9   # how dark the corners get at full strength
+
+
+def vignette_png(strength: float) -> Path:
+    """A see-through picture, black at the edges and clear in the middle, saved once per strength
+    (in steps of 5%) and laid over the video: much cheaper than ffmpeg's vignette filter."""
+    step = int(round(min(max(strength, 0.0), 1.0) * 20))
+    path = config.DATA_DIR / "vignettes" / f"vignette_{step * 5}.png"
+    if not path.exists():
+        import numpy as np
+        from PIL import Image
+
+        ys, xs = np.mgrid[0:P.H, 0:P.W].astype("float32")
+        # distance from the centre, 0 in the middle and 1 at the corners, then eased in from 35% out
+        r = np.hypot((xs - P.W / 2) / (P.W / 2), (ys - P.H / 2) / (P.H / 2)) / np.sqrt(2)
+        alpha = np.clip((r - 0.35) / 0.65, 0, 1) ** 1.6 * VIGNETTE_MAX_ALPHA * step / 20
+        img = np.zeros((P.H, P.W, 4), dtype="uint8")
+        img[..., 3] = np.round(alpha * 255).astype("uint8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp.png")
+        Image.fromarray(img, "RGBA").save(tmp)
+        tmp.replace(path)
+    return path
+
+
 class _Graph:
     def __init__(self):
         self.inputs, self.chains, self.n = [], [], 0
@@ -365,6 +399,20 @@ def build(project: dict, job_dir: Path, ass_name: str, music: bool = True) -> tu
                 voice.append(f"[ova{k}]")
             k += 1
 
+    # --- whole-picture effect and vignette: over the video and B-roll, under the text
+    fx = pj["look"].get("effect", "none")
+    if fx == "glow":
+        g.chain(f"{vcur}split=2[fxa][fxb];[fxb]gblur=sigma=24[fxc];[fxa][fxc]blend=all_mode=screen:all_opacity=0.4[fxd]")
+        vcur = "[fxd]"
+    elif fx in VIDEO_FX_CHAINS:
+        g.chain(f"{vcur}{VIDEO_FX_CHAINS[fx]}[fxd]")
+        vcur = "[fxd]"
+    if pj["look"].get("vignette", 0) >= 0.02:
+        idx = g.add_input("-loop", "1", "-t", f"{total:.3f}", "-i", vignette_png(pj["look"]["vignette"]))
+        g.chain(f"[{idx}:v]format=rgba[vgin]")
+        g.chain(f"{vcur}[vgin]overlay=format=auto[vgout]")
+        vcur = "[vgout]"
+
     # --- text and captions
     if ass_name:
         g.chain(f"{vcur}subtitles={ass_name}:fontsdir=fonts[txt]")
@@ -479,7 +527,8 @@ def summary(project: dict) -> dict:
     count = {k: sum(len(t["items"]) for t in project["tracks"] if t["kind"] == k) for k in P.TRACK_KINDS}
     return {"length": P.duration(project), "clips": len(main), "texts": count["text"],
             "captions": count["caption"], "overlays": count["overlay"], "sounds": count["audio"],
-            "look": project["look"]["filter"]}
+            "look": project["look"]["filter"], "effect": project["look"].get("effect", "none"),
+            "vignette": project["look"].get("vignette", 0.0)}
 
 
 def dumps(project: dict) -> str:

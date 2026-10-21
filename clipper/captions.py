@@ -1,9 +1,14 @@
-"""Auto captions: HyperFrames' on-device speech-to-text (`hyperframes transcribe`, the Parakeet
-model) gives every word with its timing; the words are grouped into short captions (1-3 words,
-the way short-form captions read) for the editor. Nothing leaves this PC.
+"""Auto captions: every word of the clip with its timing, grouped into short captions (1-3
+words, the way short-form captions read) for the editor.
 
-The transcript is kept per clip (transcript.json) until the clip's video changes. Accents can
-trip the recogniser, so captions are meant to be checked and fixed in the editor.
+The words come from Gemini listening to the clip (config.yaml `captions: engine: gemini`, the
+default; it follows Nigerian English, Pidgin and Yoruba/Igbo/Hausa far better than a generic
+recogniser). If Gemini can't be reached, HyperFrames' on-device speech-to-text (`hyperframes
+transcribe`, the Parakeet model; nothing leaves this PC) takes over, and `engine: parakeet`
+uses only that.
+
+The transcript is kept per clip (transcript.json) until the clip's video changes. Captions are
+still meant to be checked and fixed in the editor.
 """
 
 import json
@@ -14,6 +19,8 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
+
+from pydantic import BaseModel, Field
 
 from . import media, studio
 
@@ -29,12 +36,13 @@ class CaptionError(RuntimeError):
     pass
 
 
-def transcribe(job_dir: Path, reference: str = "") -> list:
+def transcribe(job_dir: Path, reference: str = "", cfg: dict = None) -> list:
     """[{"text", "start", "end"}, ...] for every spoken word of transformed.mp4 (cached).
-    `reference`: what Gemini heard in this clip (its spoken_words); where it disagrees with the
-    on-device recogniser, its spelling is used and the recogniser's timing kept."""
-    words = words_for(job_dir / "transformed.mp4", job_dir / TRANSCRIPT)
-    return correct_words(words, reference) if reference else words
+    `cfg` turns on Gemini's transcript (see engine_for). `reference`: what Gemini heard while
+    picking this clip (its spoken_words); when the on-device recogniser did the listening, where
+    they disagree its spelling is used and the recogniser's timing kept."""
+    words, engine = _load(job_dir / "transformed.mp4", job_dir / TRANSCRIPT, cfg)
+    return correct_words(words, reference) if reference and engine != "gemini" else words
 
 
 MIN_AGREEMENT = 0.5  # below this the two transcripts are too different to trust the match
@@ -85,25 +93,128 @@ def _spread(tokens: list, start: float, end: float) -> list:
     return out
 
 
-def words_for(video: Path, cache: Path) -> list:
+def engine_for(cfg: dict = None) -> str:
+    """"gemini" or "parakeet": who transcribes. Without a config (the long source video that picks
+    highlights from a transcript) it is always the on-device one."""
+    if not cfg:
+        return "parakeet"
+    return "parakeet" if str((cfg.get("captions") or {}).get("engine", "gemini")).lower() == "parakeet" else "gemini"
+
+
+def words_for(video: Path, cache: Path, cfg: dict = None) -> list:
     """Transcribe any video to word-level timings [{"text", "start", "end"}, ...], cached next to
     it and reused until the video changes. Used for captions (transformed.mp4) and for picking
     highlights from a transcript (source.mp4)."""
+    return _load(video, cache, cfg)[0]
+
+
+def _load(video: Path, cache: Path, cfg: dict = None) -> tuple:
+    """(words, engine that heard them). A transcript saved by the on-device recogniser is redone
+    by Gemini when Gemini is asked for; one saved by Gemini is always kept."""
+    want = engine_for(cfg)
     stamp = video.stat().st_mtime
     if cache.exists():
         saved = json.loads(cache.read_text(encoding="utf-8"))
-        if saved.get("source_mtime") == stamp:
-            return saved["words"]
+        have = saved.get("engine", "parakeet")
+        if saved.get("source_mtime") == stamp and (have == "gemini" or want == "parakeet"):
+            return saved["words"], have
     if not media.has_audio(video):
         raise CaptionError("This clip has no sound to caption")
+    words, engine = None, "parakeet"
     work = Path(tempfile.mkdtemp(prefix="clipper_tx_"))
     try:
         audio = work / "audio.wav"
         media.run(["ffmpeg", "-y", "-loglevel", "error", "-i", video, "-vn", "-ac", "1", "-ar", "16000", audio])
-        words = _transcribe_all(audio, media.duration(audio), work)
+        length = media.duration(audio)
+        gemini_error = ""
+        if want == "gemini" and length <= GEMINI_MAX_S:
+            try:
+                words, engine = gemini_words(audio, length, cfg, work), "gemini"
+            except Exception as err:  # noqa: BLE001 - no key, busy, refused: the on-device model is the fallback
+                gemini_error = str(err)[:200]
+                log.warning("Gemini couldn't transcribe the clip (%s); using the on-device recogniser", gemini_error)
+        if words is None:
+            try:
+                words = _transcribe_all(audio, length, work)
+            except (CaptionError, studio.StudioError) as err:
+                if gemini_error:
+                    raise CaptionError(f"Gemini couldn't transcribe it ({gemini_error}) and the on-device "
+                                       f"recogniser isn't available either ({str(err)[:120]})") from err
+                raise
     finally:
         shutil.rmtree(work, ignore_errors=True)
-    cache.write_text(json.dumps({"source_mtime": stamp, "words": words}, ensure_ascii=False), encoding="utf-8")
+    cache.write_text(json.dumps({"source_mtime": stamp, "engine": engine, "words": words},
+                                ensure_ascii=False), encoding="utf-8")
+    return words, engine
+
+
+# ------------------------------------------------------------------ Gemini's transcript
+
+GEMINI_MAX_S = 15 * 60   # longer audio stays with the on-device model (a very long answer, and a big upload)
+MAX_SEGMENT_S = 12.0
+
+
+class _Segment(BaseModel):
+    text: str = Field(description="What is said in this stretch, exactly as spoken, 2 to 8 words")
+    start_s: float = Field(description="Second the first word of this stretch begins, to 2 decimals")
+    end_s: float = Field(description="Second the last word of this stretch ends, to 2 decimals")
+
+
+class _Transcript(BaseModel):
+    segments: list[_Segment] = Field(description="Every spoken stretch in order; empty if nobody speaks")
+
+
+TRANSCRIBE_PROMPT = """Transcribe the speech in this {length:.1f}-second audio clip, for subtitles.
+
+- This is Nigerian content: Nigerian English, Pidgin, and some Yoruba, Igbo or Hausa. Write what is
+  actually said, in the spelling a Nigerian reader expects ("dey", "wahala", "abeg", "na so"). Never
+  translate, tidy up or "correct" the grammar, and never leave out swearing or slang.
+- Split the speech into short subtitle stretches of 2 to 8 words, at natural pauses. Put normal
+  punctuation (. , ? !) where it belongs.
+- start_s and end_s are seconds from the very start of the audio, to 2 decimals, so each stretch lines
+  up with when it is really spoken. Stretches follow each other and never overlap.
+- Skip music, laughter and noise that is not speech. If nobody speaks, return an empty list."""
+
+
+def gemini_words(audio: Path, length: float, cfg: dict, work: Path) -> list:
+    """Word timings from Gemini listening to `audio`: it gives short timed stretches of speech, and
+    each stretch's words are spread across its time by letters."""
+    from google.genai import types
+
+    from . import highlight
+
+    mp3 = work / "tx.mp3"
+    media.run(["ffmpeg", "-y", "-loglevel", "error", "-i", audio, "-vn", "-ac", "1", "-ar", "16000",
+               "-c:a", "libmp3lame", "-b:a", "48k", mp3])
+    resp = highlight.make_client(cfg).models.generate_content(
+        model=cfg["gemini"]["model"],
+        contents=[types.Part.from_bytes(data=mp3.read_bytes(), mime_type="audio/mp3"),
+                  TRANSCRIBE_PROMPT.format(length=length)],
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json", response_schema=_Transcript,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True)))
+    parsed = resp.parsed or _Transcript.model_validate_json(resp.text)
+    words = words_from_segments([(s.text, s.start_s, s.end_s) for s in parsed.segments], length)
+    if not words:
+        raise CaptionError("Gemini heard no speech in this clip")
+    return words
+
+
+def words_from_segments(segments: list, length: float) -> list:
+    """[(text, start, end)] -> word timings. Times are clamped to the clip, kept in order and
+    non-overlapping; a stretch with a missing or backwards end gets a plain reading speed."""
+    words, floor = [], 0.0
+    for text, start, end in sorted(segments, key=lambda s: s[1]):
+        tokens = str(text or "").split()
+        if not tokens:
+            continue
+        start = min(max(float(start), floor), max(length - 0.05, 0.0))
+        end = float(end)
+        if end - start < 0.08 * len(tokens) or end - start > MAX_SEGMENT_S:
+            end = start + min(MAX_SEGMENT_S, 0.35 * len(tokens))
+        end = min(max(end, start + 0.1), max(length, start + 0.1))
+        words += _spread(tokens, start, end)
+        floor = end
     return words
 
 
@@ -176,9 +287,10 @@ def group(words: list) -> list:
     return groups
 
 
-def captions_for(job_dir: Path, trim_start: float, trim_end: float, reference: str = "") -> list:
+def captions_for(job_dir: Path, trim_start: float, trim_end: float, reference: str = "",
+                 cfg: dict = None) -> list:
     """Caption texts for the editor, timed from the trimmed clip's start."""
-    words = [w for w in transcribe(job_dir, reference) if w["end"] > trim_start and w["start"] < trim_end]
+    words = [w for w in transcribe(job_dir, reference, cfg=cfg) if w["end"] > trim_start and w["start"] < trim_end]
     texts = []
     chunks = group(words)
     for i, chunk in enumerate(chunks):

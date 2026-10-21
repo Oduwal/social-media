@@ -191,6 +191,10 @@ function projectSettings(nothingSelected = true) {
     section("Look", el("div", { class: "swatches" }, ...Object.entries(CAT.looks).map(([k, label]) => el("button", {
       class: "swatch" + (p.look.filter === k ? " on" : ""), onclick: () => { commit("look"); p.look.filter = k; changed("props"); renderDesign(); } },
       el("span", { class: "sample", style: { filter: CAT.css_looks[k] } }), label)))),
+    section("Effect", el("div", { class: "chips" }, ...Object.entries(CAT.video_fx).map(([k, label]) => el("button", {
+      class: "chip" + ((p.look.effect || "none") === k ? " on" : ""), onclick: () => { commit("effect"); p.look.effect = k; changed("props"); renderDesign(); } }, label)))),
+    section("Vignette",
+      row("Darken the edges", num(p.look.vignette || 0, { min: 0, max: 1, step: 0.05 }, set(null, "vignette", (v) => { p.look.vignette = v; })))),
     section("Fades",
       row("Fade in", num(p.look.fade_in, { min: 0, max: 3, step: 0.1 }, set(null, "fade in", (v) => { p.look.fade_in = v; }))),
       row("Fade out", num(p.look.fade_out, { min: 0, max: 3, step: 0.1 }, set(null, "fade out", (v) => { p.look.fade_out = v; })))),

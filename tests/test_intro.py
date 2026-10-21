@@ -97,7 +97,7 @@ def test_batch_project_has_voice_hook_dipped_clip_and_clear_captions(fresh_db, t
 
     monkeypatch.setattr(intro, "make_intro", lambda job, d, cfg, text="": {
         "text": "Is Gehgeh actually right?", "file": wav.name, "duration": 3.0})
-    monkeypatch.setattr(captions, "captions_for", lambda d, a, b, ref="": [
+    monkeypatch.setattr(captions, "captions_for", lambda d, a, b, ref="", cfg=None: [
         {"text": "inside the intro", "start": 0.5, "end": 2.0, "words": None, **captions.STYLE},
         {"text": "after it", "start": 4.0, "end": 6.0, "words": None, **captions.STYLE}])
     spec = batch_edit.clean_spec({"captions": "highlight", "ai_intro": "on", "zoom": "slow_in", "quality": "high",
@@ -197,7 +197,7 @@ def test_overlay_ideas_route_uses_the_trim_offset(client, monkeypatch):
     _clip("23-01", state="READY", seconds=10)
     seen = {}
 
-    def fake_words(job_dir, offset, length):
+    def fake_words(job_dir, offset, length, cfg=None):
         seen.update(offset=offset, length=length)
         return [{"text": "hi", "start": 0.0, "end": 0.4}]
 

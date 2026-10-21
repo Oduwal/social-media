@@ -235,7 +235,7 @@ def peaks(job_dir: Path, asset_id: str, per_second: int = 40) -> dict:
 
 # ------------------------------------------------------------------ captions on the timeline
 
-def caption_items(job_dir: Path, project: dict, style: dict, reference: str = "") -> list:
+def caption_items(job_dir: Path, project: dict, style: dict, reference: str = "", cfg: dict = None) -> list:
     """Word-timed captions for the edited timeline: each spoken word of the clip is placed
     where its moment lands after cuts and speed changes, then grouped into short captions."""
     from . import captions
@@ -245,7 +245,7 @@ def caption_items(job_dir: Path, project: dict, style: dict, reference: str = ""
         src = project["assets"].get(item["asset"], {}).get("src")
         if src not in ("clip", "original"):  # only the clip's own sound is transcribed
             continue
-        for w in captions.transcribe(job_dir, reference):
+        for w in captions.transcribe(job_dir, reference, cfg=cfg):
             if w["start"] >= item["in"] and w["end"] <= item["out"] + 0.05:
                 to_t = (lambda s, it=item, st=start: st + (s - it["in"]) / it["speed"])
                 words.append({"text": w["text"], "start": round(to_t(w["start"]), 3),
@@ -279,7 +279,7 @@ x/y being the centre of an item. Keyframes are [[seconds from the item's start, 
 Format: {format}
 
 Allowed values: fonts {fonts}; animations {anims}; text effects {effects}; transitions
-{transitions}; looks {looks}.
+{transitions}; looks {looks}; video effects {video_fx} (look.effect); look.vignette 0 to 1.
 
 Request: {request}
 
@@ -297,7 +297,7 @@ def assist(project: dict, request: str, job_dir: Path, cfg: dict) -> dict:
         raise EditorError("Say what you'd like to change")
     prompt = ASSIST_PROMPT.format(
         format=P.__doc__, fonts=list(P.FONTS), anims=list(P.ANIMS), effects=list(P.EFFECTS),
-        transitions=list(P.TRANSITIONS), looks=list(P.FILTERS), request=request.strip()[:1000],
+        transitions=list(P.TRANSITIONS), looks=list(P.FILTERS), video_fx=list(P.VIDEO_FX), request=request.strip()[:1000],
         project=json.dumps(project, separators=(",", ":")))
     client = gemini.make_client(cfg)
     resp = client.models.generate_content(

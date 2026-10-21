@@ -6,7 +6,29 @@ import {
 } from "./core.js";
 
 const stage = $("#stage"), canvas = $("#canvas");
-const L = { main: $("#l-main"), tfx: $("#l-tfx"), ov: $("#l-ov"), txt: $("#l-txt"), fade: $("#l-fade"), guides: $("#l-guides") };
+const L = { main: $("#l-main"), tfx: $("#l-tfx"), ov: $("#l-ov"), fx: $("#l-fx"), vig: $("#l-vig"), txt: $("#l-txt"),
+  fade: $("#l-fade"), guides: $("#l-guides") };
+
+// Live approximations of the whole-picture effects (the render uses ffmpeg; see render2.VIDEO_FX_CHAINS).
+const GRAIN = "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>\")";
+const FX_CSS = {
+  none: {},
+  grain: { backgroundImage: GRAIN, opacity: ".35", mixBlendMode: "overlay" },
+  sharpen: { backdropFilter: "contrast(1.1) saturate(1.05)" },
+  glow: { backdropFilter: "brightness(1.08) contrast(.96) saturate(1.1)" },
+  vhs: { backdropFilter: "saturate(1.2) contrast(1.05)", backgroundImage: "repeating-linear-gradient(0deg, rgba(0,0,0,.22) 0 3px, transparent 3px 7px)" },
+  cinema: { background: "linear-gradient(#000 0 10%, transparent 10% 90%, #000 90%)" },
+};
+const FX_RESET = { backgroundImage: "", background: "", backdropFilter: "", opacity: "", mixBlendMode: "" };
+let lastFx = "";
+function drawEffects(look) {
+  const fx = look.effect || "none", v = look.vignette || 0;
+  const key = fx + "|" + v;
+  if (key === lastFx) return;
+  lastFx = key;
+  Object.assign(L.fx.style, FX_RESET, FX_CSS[fx] || {});
+  L.vig.style.background = v >= 0.02 ? `radial-gradient(ellipse at center, rgba(0,0,0,0) 35%, rgba(0,0,0,${(0.9 * v).toFixed(3)}) 100%)` : "";
+}
 const box = $("#selbox");
 function rgba(hex, a) {
   const n = parseInt((hex || "#000000").slice(1), 16) || 0;
@@ -92,6 +114,7 @@ export function frame(force) {
   const t = S.time, p = S.project, main = mainTrack(), lay = layout(), total = duration();
   const lookCss = CAT.css_looks[p.look.filter] || "none";
   L.main.style.filter = lookCss === "none" ? "" : lookCss;
+  drawEffects(p.look);
   // main track
   let fadeColor = null, fadeAlpha = 0;
   lay.forEach(({ item, start, len, d }, i) => {

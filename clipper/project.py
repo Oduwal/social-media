@@ -3,7 +3,7 @@ HyperFrames / CapCut-style editor, rendered by ffmpeg (render2.py).
 
 project = {
   "version": 2,
-  "look": {"filter": "none", "fade_in": 0.0, "fade_out": 0.0},
+  "look": {"filter": "none", "effect": "none", "vignette": 0.0, "fade_in": 0.0, "fade_out": 0.0},
   "export": {"height": 1920, "fps": 30, "quality": "standard"},
   "ducking": true,                       # music dips while people talk
   "assets": {id: {"kind": "video"|"image"|"audio", "src": "clip"|"original"|"music/<f>"|"upload/<f>"|"emoji/<hex>"|"shape/<id>",
@@ -34,6 +34,9 @@ W, H, FPS = 1080, 1920, 30
 VERSION = 2
 
 FILTERS = ("none", "warm", "cool", "vivid", "bw", "vintage", "cinematic", "faded", "bright")
+# Whole-picture effects (drawn over the video, B-roll and pictures, under the text) and their labels.
+VIDEO_FX = {"none": "None", "grain": "Film grain", "sharpen": "Sharpen", "glow": "Soft glow",
+            "vhs": "VHS", "cinema": "Cinema bars"}
 TRANSITIONS = {  # editor name -> ffmpeg xfade transition
     "none": None, "fade": "fade", "dissolve": "dissolve", "fadeblack": "fadeblack", "fadewhite": "fadewhite",
     "wipeleft": "wipeleft", "wiperight": "wiperight", "wipeup": "wipeup", "wipedown": "wipedown",
@@ -305,6 +308,8 @@ def clean(raw: dict, known_assets: dict = None) -> dict:
     out = {
         "version": VERSION,
         "look": {"filter": _choice(look.get("filter"), FILTERS, "none"),
+                 "effect": _choice(look.get("effect"), VIDEO_FX, "none"),
+                 "vignette": _num(look.get("vignette"), 0, 1, 0.0),
                  "fade_in": _num(look.get("fade_in"), 0, 3, 0.0), "fade_out": _num(look.get("fade_out"), 0, 3, 0.0)},
         "export": {"height": int(_choice(int(_num((raw.get("export") or {}).get("height"), 0, 4000, 1920)), HEIGHTS, 1920)),
                    "fps": int(_choice(int(_num((raw.get("export") or {}).get("fps"), 0, 120, 30)), FPS_CHOICES, 30)),
@@ -508,7 +513,8 @@ def from_v1(edit: dict, clip_asset: dict, music_asset: tuple = None) -> dict:
                             "fade_out": music.get("fade_out", 1.0), "music": True, "duck": music.get("ducking", True)})
     tracks.append({"id": "music", "kind": "audio", "name": "Music", "items": audio_items})
     return {"version": VERSION,
-            "look": {"filter": edit.get("filter", "none"), "fade_in": edit.get("fade_in", 0),
+            "look": {"filter": edit.get("filter", "none"), "effect": "none", "vignette": 0.0,
+                     "fade_in": edit.get("fade_in", 0),
                      "fade_out": edit.get("fade_out", 0)},
             "export": {"height": 1920, "fps": 30,
                        "quality": V1_QUALITY.get(edit.get("quality"), "standard")},

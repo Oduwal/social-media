@@ -124,7 +124,7 @@ def build_edit(spec: dict, job: dict, job_dir: Path, cfg: dict, intro: dict = No
     if look and media.has_audio(base):
         try:
             texts += [{**t, **look, "position": spec["caption_position"]}
-                      for t in captions.captions_for(job_dir, 0.0, duration, reference)]
+                      for t in captions.captions_for(job_dir, 0.0, duration, reference, cfg)]
         except captions.CaptionError:
             pass  # a clip with nothing to caption still gets its other edits
     title = title_for(spec, job)

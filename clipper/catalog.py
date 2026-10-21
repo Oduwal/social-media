@@ -149,7 +149,7 @@ def font_metrics() -> dict:
 def as_dict() -> dict:
     from .render import preview_filters
     return {"titles": TITLES, "captions": CAPTIONS, "emoji": EMOJI, "social": SOCIAL, "shapes": SHAPES,
-            "clip_effects": CLIP_EFFECTS, "looks": LOOKS, "css_looks": preview_filters(),
+            "clip_effects": CLIP_EFFECTS, "looks": LOOKS, "css_looks": preview_filters(), "video_fx": P.VIDEO_FX,
             "transitions": TRANSITION_NAMES, "anims": ANIM_NAMES, "effects": list(P.EFFECTS),
             "fonts": {name: {"file": f[2], "bold": f[1], **font_metrics()[name]} for name, f in P.FONTS.items()},
             "anim_curves": {a: P.anim_curves(a) for a in P.ANIMS}, "anim_dur": P.ANIM_DUR,

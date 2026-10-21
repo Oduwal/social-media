@@ -52,6 +52,7 @@ body.ed2 { display: grid; grid-template-rows: 46px auto 1fr 300px; }
 #l-main > * { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform-origin: 50% 50%; }
 #l-tfx, #l-fade { pointer-events: none; } #l-fade { background: #000; opacity: 0; }
 #l-guides { pointer-events: none; }
+#l-fx, #l-vig { pointer-events: none; }
 .ovwrap { position: absolute; transform-origin: 50% 50%; cursor: move; pointer-events: auto; }
 .ovwrap > * { display: block; pointer-events: none; }
 .txt { position: absolute; max-width: 960px; white-space: pre-wrap; cursor: move; user-select: none; overflow-wrap: break-word; pointer-events: auto; }
@@ -86,6 +87,7 @@ input[type=color] { width: 44px; height: 26px; border: 1px solid var(--line); bo
 .chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .chip { border: 1px solid var(--line); background: var(--panel2); border-radius: 99px; padding: 3px 9px; cursor: pointer; font-size: 12px; }
 .chip:hover { border-color: var(--accent); }
+.chip.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, var(--panel2)); }
 .swatches { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .swatch { border: 1px solid var(--line); background: var(--panel2); border-radius: 8px; padding: 4px; cursor: pointer; font-size: 11px; }
 .swatch.on { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
