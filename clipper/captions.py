@@ -1,11 +1,10 @@
 """Auto captions: every word of the clip with its timing, grouped into short captions (1-3
 words, the way short-form captions read) for the editor.
 
-The words come from Gemini listening to the clip (config.yaml `captions: engine: gemini`, the
-default; it follows Nigerian English, Pidgin and Yoruba/Igbo/Hausa far better than a generic
-recogniser). If Gemini can't be reached, HyperFrames' on-device speech-to-text (`hyperframes
-transcribe`, the Parakeet model; nothing leaves this PC) takes over, and `engine: parakeet`
-uses only that.
+The words come from HyperFrames' on-device speech-to-text (`hyperframes transcribe`, the
+Parakeet model; nothing leaves this PC), the default (config.yaml `captions: engine: parakeet`).
+With `engine: gemini`, Gemini listens to the clip instead (it follows Nigerian English, Pidgin and
+Yoruba/Igbo/Hausa better), and Parakeet takes over if Gemini can't be reached.
 
 The transcript is kept per clip (transcript.json) until the clip's video changes. Captions are
 still meant to be checked and fixed in the editor.
@@ -98,7 +97,7 @@ def engine_for(cfg: dict = None) -> str:
     highlights from a transcript) it is always the on-device one."""
     if not cfg:
         return "parakeet"
-    return "parakeet" if str((cfg.get("captions") or {}).get("engine", "gemini")).lower() == "parakeet" else "gemini"
+    return "gemini" if str((cfg.get("captions") or {}).get("engine", "parakeet")).lower() == "gemini" else "parakeet"
 
 
 def words_for(video: Path, cache: Path, cfg: dict = None) -> list:
@@ -109,14 +108,14 @@ def words_for(video: Path, cache: Path, cfg: dict = None) -> list:
 
 
 def _load(video: Path, cache: Path, cfg: dict = None) -> tuple:
-    """(words, engine that heard them). A transcript saved by the on-device recogniser is redone
-    by Gemini when Gemini is asked for; one saved by Gemini is always kept."""
+    """(words, engine that heard them). A saved transcript is reused only if the engine asked for
+    is the one that made it (so switching engines redoes it)."""
     want = engine_for(cfg)
     stamp = video.stat().st_mtime
     if cache.exists():
         saved = json.loads(cache.read_text(encoding="utf-8"))
         have = saved.get("engine", "parakeet")
-        if saved.get("source_mtime") == stamp and (have == "gemini" or want == "parakeet"):
+        if saved.get("source_mtime") == stamp and have == want:
             return saved["words"], have
     if not media.has_audio(video):
         raise CaptionError("This clip has no sound to caption")

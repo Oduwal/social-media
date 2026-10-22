@@ -116,6 +116,11 @@ flow:
   cooldown_minutes: 60        # pause after Flow reports unusual activity or limits
   timeout_minutes: 12         # give up on one edit after this long
 
+# Who writes the on-screen subtitles: "parakeet" = the on-device model (no internet, no quota)
+# | "gemini" = Gemini listens to the clip (better with Pidgin/Yoruba; falls back to parakeet).
+captions:
+  engine: "parakeet"
+
 # The video editor behind "Edit video": "clipper" = Clipper's timeline editor (tracks, keyframes,
 # transitions, captions, catalog; renders in a minute or two), "simple" = the older one-screen
 # editor, "studio" = HyperFrames Studio (renders take several minutes). All three are one click

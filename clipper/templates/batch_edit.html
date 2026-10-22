@@ -27,6 +27,7 @@
   .pv .pic { position: relative; aspect-ratio: 9 / 16; border-radius: 14px; overflow: hidden; background: #000; border: 2px solid var(--line); }
   .pv .layer { position: absolute; inset: 0; background: center / cover no-repeat; }
   .wm { position: absolute; font: 700 11px Poppins, Arial, sans-serif; color: #fff; text-shadow: 1px 1px 1px #0008; }
+  .fxl { position: absolute; inset: 0; pointer-events: none; }
   .saved { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 </style>
 
@@ -106,6 +107,23 @@
   </section>
 
   <section>
+    <h2>Effect &amp; vignette</h2>
+    <div class="tiles">
+    {% for k, label in opts.video_fx.items() %}
+      <label class="tile" data-kind="fx" data-key="{{ k }}">
+        <input type="radio" name="video_fx" value="{{ k }}">
+        <div class="pic" style="background-image:url('{{ thumb }}'); aspect-ratio: 1/1"></div>
+        <div class="name">{{ label }}</div>
+      </label>
+    {% endfor %}
+    </div>
+    <label class="small row" style="margin-top:8px">Vignette (darker edges)
+      <input name="vignette" type="range" min="0" max="1" step="0.05" style="flex:1"> <output id="vigout" class="muted"></output></label>
+    <p class="muted small">“Mix” gives each clip a different effect in turn. Both are drawn over the video and its B-roll, under the text,
+      and stay adjustable in the editor afterwards.</p>
+  </section>
+
+  <section>
     <h2>Motion</h2>
     <div class="tiles">
     {% for k, label in opts.zooms.items() %}
@@ -175,6 +193,17 @@ document.head.insertAdjacentHTML("beforeend", "<style>" + [0, 1, 2, 3, 4].map((i
   return `@keyframes be-word${i} { 0%,${on}% { opacity: 0 } ${on + 2}%,88% { opacity: 1 } 97%,100% { opacity: 0 } }` +
          `@keyframes be-lit${i} { 0%,${on}% { color: var(--base) } ${on + 1}%,${off}% { color: var(--accent); transform: scale(1.1) } ${off + 1}%,100% { color: var(--base) } }`;
 }).join("") + "</style>");
+// live approximations of the effects (the render uses ffmpeg), same as the editor's preview
+const GRAIN = "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>\")";
+const FX_CSS = {
+  none: "", grain: `background-image:${GRAIN};opacity:.35;mix-blend-mode:overlay`,
+  sharpen: "backdrop-filter:contrast(1.1) saturate(1.05)", glow: "backdrop-filter:brightness(1.08) contrast(.96) saturate(1.1)",
+  vhs: "backdrop-filter:saturate(1.2) contrast(1.05);background-image:repeating-linear-gradient(0deg,rgba(0,0,0,.22) 0 3px,transparent 3px 7px)",
+  cinema: "background:linear-gradient(#000 0 10%,transparent 10% 90%,#000 90%)",
+};
+const MIX_FIRST = "grain";
+const fxLayer = (fx) => `<div class="fxl" style="${FX_CSS[fx === "mix" ? MIX_FIRST : fx] || ""}"></div>`;
+const vigLayer = (v) => v >= 0.02 ? `<div class="fxl" style="background:radial-gradient(ellipse at center,rgba(0,0,0,0) 35%,rgba(0,0,0,${(0.9 * v).toFixed(3)}) 100%)"></div>` : "";
 const SAMPLE = {caption: "THIS IS HOW IT LOOKS", title: "wait for it", cap3: ["THIS", "IS HOW", "IT LOOKS"]};
 
 // ---- fields <-> spec
@@ -241,6 +270,11 @@ function paintTiles() {
     pic.querySelectorAll(".cap").forEach((e) => e.remove());
     pic.insertAdjacentHTML("beforeend", titleEl(t.dataset.key, "middle", 118, "POV: you…"));
   });
+  document.querySelectorAll('.tile[data-kind="fx"]').forEach((t) => {
+    const pic = t.querySelector(".pic");
+    pic.querySelectorAll(".fxl").forEach((e) => e.remove());
+    pic.insertAdjacentHTML("beforeend", fxLayer(t.dataset.key));
+  });
   document.querySelectorAll('.tile[data-kind="zoom"]').forEach((t) => {
     const z = t.querySelector(".z"), k = t.dataset.key;
     z.style.animation = k === "slow_in" ? "be-zoom 2.4s ease-in-out infinite alternate" : k === "slow_out" ? "be-zoomout 2.4s ease-in-out infinite alternate" : "none";
@@ -257,11 +291,14 @@ function titleText() {
 function render() {
   const pv = document.getElementById("pv"), base = document.getElementById("pvbase");
   const w = pv.clientWidth || 240;
-  pv.querySelectorAll(".cap,.wm").forEach((e) => e.remove());
+  pv.querySelectorAll(".cap,.wm,.fxl").forEach((e) => e.remove());
   const f = val("filter");
   base.style.filter = ({{ render_opts.css_filters | tojson }})[f] || "none";
   const z = val("zoom");
   base.style.animation = z === "slow_in" ? "be-zoom 4s ease-in-out infinite alternate" : z === "slow_out" ? "be-zoomout 4s ease-in-out infinite alternate" : "none";
+  const vig = Number(val("vignette")) || 0;
+  document.getElementById("vigout").textContent = vig ? Math.round(vig * 100) + "%" : "off";
+  pv.insertAdjacentHTML("beforeend", fxLayer(val("video_fx")) + vigLayer(vig));   // under the text, like the render
   pv.insertAdjacentHTML("beforeend", captionEl(val("captions"), val("caption_position"), w, SAMPLE.caption));
   const title = titleText();
   if (title) pv.insertAdjacentHTML("beforeend", titleEl(val("title_style"), val("title_position"), w, title));

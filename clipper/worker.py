@@ -379,15 +379,23 @@ def render_edit(job: dict, cfg: dict) -> None:
     if spec:  # the answers from the library's Batch edit: made into this clip's edit now
         info = dict(job.get("info") or {})
         proj = None
-        if spec.get("ai_intro"):
+        if batch_edit.wants_project(spec):
             try:
                 proj, made = batch_edit.build_project(spec, job, job_dir, cfg)
                 info.pop("intro_error", None)
-                info["intro"] = {"text": made["text"], "seconds": made["duration"]}
+                if made:
+                    info["intro"] = {"text": made["text"], "seconds": made["duration"]}
             except Exception as err:  # noqa: BLE001 - the voice is optional: finish the clip without it
-                log.warning("[%s] AI intro skipped: %s", vid, err)
-                info["intro_error"] = str(err)[:300]
-                db.update(vid, info=info)
+                log.warning("[%s] AI intro / effect project skipped: %s", vid, err)
+                if spec.get("ai_intro"):
+                    info["intro_error"] = str(err)[:300]
+                    db.update(vid, info=info)
+                no_voice = {**spec, "ai_intro": False}
+                if batch_edit.wants_project(no_voice):  # still give it the effect and vignette, just without the voice
+                    try:
+                        proj, _ = batch_edit.build_project(no_voice, job, job_dir, cfg)
+                    except Exception as err2:  # noqa: BLE001
+                        log.warning("[%s] effect project skipped too: %s", vid, err2)
         if proj is not None:
             music = project.to_v1(proj, media.duration(job_dir / "transformed.mp4"))["music"]
             db.update(vid, edit=proj, info=info, music_track=music["track"], music_volume=music["volume"])

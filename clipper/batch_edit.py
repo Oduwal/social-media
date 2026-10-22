@@ -7,7 +7,7 @@ transcribed in the background and the result can still be opened in the editor a
 
 from pathlib import Path
 
-from . import captions, config, media, render
+from . import captions, config, media, project as P, render
 
 # caption looks: what the "Captions" question offers -> the text fields they set
 CAPTIONS = {
@@ -37,6 +37,10 @@ TITLE_SIZES = {"impact": 96, "comic": 88, "handwritten": 84, "cinema": 110, "ret
 TITLE_POSITIONS = ("top", "middle")
 WATERMARK_POSITIONS = tuple(media.WATERMARK_POS)
 MUSIC_CHOICES = {"keep": "Keep the clip's suggested music", "none": "No music"}
+# whole-picture effect: one for every clip, or "mix" = each clip gets a different one in turn
+MIX = "mix"
+MIX_EFFECTS = ("grain", "glow", "vhs", "sharpen")
+VIDEO_FX_CHOICES = {**P.VIDEO_FX, MIX: "Mix: a different one on each clip"}
 
 
 def options() -> dict:
@@ -46,6 +50,7 @@ def options() -> dict:
         "caption_positions": CAPTION_POSITIONS,
         "title_sources": TITLE_SOURCES, "title_styles": TITLE_STYLES, "title_sizes": TITLE_SIZES, "title_positions": TITLE_POSITIONS,
         "filters": {k: label for k, (label, _) in render.FILTERS.items()},
+        "video_fx": VIDEO_FX_CHOICES,
         "zooms": render.ZOOMS, "qualities": {k: v[0] for k, v in render.QUALITY.items()},
         "watermark_positions": WATERMARK_POSITIONS, "music": MUSIC_CHOICES,
     }
@@ -78,6 +83,8 @@ def clean_spec(form) -> dict:
         "title_position": _pick(get("title_position"), TITLE_POSITIONS, "top"),
         "title_seconds": _num(get("title_seconds"), 0, 600, 4.0),  # 0 = the whole clip
         "filter": _pick(get("filter"), render.FILTERS, "none"),
+        "video_fx": _pick(get("video_fx"), VIDEO_FX_CHOICES, "none"),
+        "vignette": round(_num(get("vignette"), 0.0, 1.0, 0.0), 2),   # 0 = none, 1 = darkest edges
         "zoom": _pick(get("zoom"), render.ZOOMS, "none"),
         "fade": bool(get("fade")),
         "music": _pick(get("music"), MUSIC_CHOICES, "keep"),
@@ -89,6 +96,21 @@ def clean_spec(form) -> dict:
     if spec["title_source"] == "text" and not spec["title_text"]:
         spec["title_source"] = "none"
     return spec
+
+
+def spec_for_clip(spec: dict, index: int) -> dict:
+    """The answers for the `index`-th clip of a batch: "mix" becomes one concrete effect, rotating
+    through MIX_EFFECTS so neighbouring clips differ. Anything else is returned as it is."""
+    if spec.get("video_fx") != MIX:
+        return spec
+    return {**spec, "video_fx": MIX_EFFECTS[index % len(MIX_EFFECTS)]}
+
+
+def wants_project(spec: dict) -> bool:
+    """Effects and the vignette are drawn by the timeline editor's renderer, so a batch that uses
+    them (or an AI intro) is rendered as an editor project."""
+    return bool(spec.get("ai_intro") or spec.get("vignette", 0) >= 0.02
+                or spec.get("video_fx", "none") not in ("none", MIX))
 
 
 def title_for(spec: dict, job: dict) -> str:
@@ -150,16 +172,21 @@ def build_edit(spec: dict, job: dict, job_dir: Path, cfg: dict, intro: dict = No
 
 
 def build_project(spec: dict, job: dict, job_dir: Path, cfg: dict) -> tuple:
-    """(editor project, intro info) for a batch with an AI intro. A project, not a plain edit, so
-    the voice, the hook and everything else open in the editor for you to change or add images to."""
-    from . import editor2, intro as intro_mod, project as P
+    """(editor project, intro info or None) for a batch with an AI intro, an effect or a vignette. A
+    project, not a plain edit, so the voice, the hook, the effect and everything else open in the
+    editor for you to change or add images to."""
+    from . import editor2, intro as intro_mod
 
-    made = intro_mod.make_intro(job, job_dir, cfg, spec.get("intro_text", ""))
+    made = intro_mod.make_intro(job, job_dir, cfg, spec.get("intro_text", "")) if spec.get("ai_intro") else None
     v1 = build_edit(spec, job, job_dir, cfg, intro=made)
     known = editor2.known_assets(job_dir)
     track = v1["music"]["track"]
     music_asset = (f"music:{track}", known[f"music:{track}"]) if track and f"music:{track}" in known else None
     proj = P.from_v1(v1, known["clip"], music_asset)
+    proj["look"]["effect"] = spec.get("video_fx") if spec.get("video_fx") in P.VIDEO_FX else "none"
+    proj["look"]["vignette"] = spec.get("vignette", 0.0)
+    if not made:
+        return editor2.clean(proj, job_dir), None
 
     aid = f"upload:{made['file']}"
     proj["assets"][aid] = known[aid]

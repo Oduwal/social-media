@@ -140,7 +140,7 @@ def test_engine_is_gemini_only_when_a_config_asks_for_it():
     assert captions.engine_for(None) == "parakeet"                  # the long source video
     assert captions.engine_for({"captions": {"engine": "gemini"}}) == "gemini"
     assert captions.engine_for({"captions": {"engine": "parakeet"}}) == "parakeet"
-    assert captions.engine_for({"gemini": {}}) == "gemini"          # a real config without the setting: the default
+    assert captions.engine_for({"gemini": {}}) == "parakeet"        # a real config without the setting: the default
 
 
 GEMINI_CFG = {"captions": {"engine": "gemini"}, "gemini": {"model": "m"}}
@@ -184,3 +184,16 @@ def test_both_engines_failing_says_so(tmp_path, monkeypatch):
     monkeypatch.setattr(captions, "_transcribe_all", lambda *a: (_ for _ in ()).throw(captions.CaptionError("no model")))
     with pytest.raises(captions.CaptionError, match="Gemini couldn't transcribe it"):
         captions.transcribe(tmp_path, cfg=GEMINI_CFG)
+
+
+@needs_ffmpeg
+def test_switching_engines_redoes_a_saved_transcript(tmp_path, monkeypatch):
+    make_clip(tmp_path / "transformed.mp4", seconds=3)
+    heard = [_w("abeg", 0.1, 0.5)]
+    monkeypatch.setattr(captions, "gemini_words", lambda *a: heard)
+    assert captions.transcribe(tmp_path, cfg=GEMINI_CFG) == heard                    # Gemini's, saved
+    monkeypatch.setattr(captions, "_transcribe_all", lambda *a: WORDS)
+    parakeet_cfg = {"captions": {"engine": "parakeet"}}
+    assert captions.transcribe(tmp_path, cfg=parakeet_cfg) == WORDS                  # subtitles back on Parakeet
+    monkeypatch.setattr(captions, "_transcribe_all", lambda *a: pytest.fail("saved Parakeet transcript is reused"))
+    assert captions.transcribe(tmp_path, cfg=parakeet_cfg) == WORDS

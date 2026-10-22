@@ -502,11 +502,11 @@ async def batch_edit_apply(request: Request):
     spec = batch_edit.clean_spec(form)
     config.ui_set(batch_last=spec)  # the form opens with these answers next time
     queued = 0
-    for clip_id in ids:
+    for n, clip_id in enumerate(ids):
         job = db.get(clip_id)
         if not job or job["kind"] != "clip":
             continue
-        info = {**(job.get("info") or {}), "render_from": "batch", "batch_edit": spec}
+        info = {**(job.get("info") or {}), "render_from": "batch", "batch_edit": batch_edit.spec_for_clip(spec, n)}
         if job["state"] == "PREVIEW":
             ok = db.transition(clip_id, "PREVIEW", state="CUT", transform_mode="original", hold=False, info=info)
         elif editable(job):

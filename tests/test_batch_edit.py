@@ -305,3 +305,79 @@ def test_caption_ideas_are_built_per_platform_and_nothing_is_saved(client, monke
     monkeypatch.setattr(highlight, "suggest_captions", broken)
     assert client.post("/api/clips/11-01/caption-ideas", json={}).status_code == 502
     assert client.post("/api/clips/nope/caption-ideas", json={}).status_code == 404
+
+
+# ------------------------------------------------------------------ effect and vignette
+
+def test_effect_and_vignette_answers_are_cleaned():
+    spec = batch_edit.clean_spec({"video_fx": "explode", "vignette": "9"})
+    assert spec["video_fx"] == "none" and spec["vignette"] == 1.0
+    spec = batch_edit.clean_spec({"video_fx": "vhs", "vignette": "0.456"})
+    assert spec["video_fx"] == "vhs" and spec["vignette"] == 0.46
+    spec = batch_edit.clean_spec({})
+    assert spec["video_fx"] == "none" and spec["vignette"] == 0.0 and not batch_edit.wants_project(spec)
+    assert batch_edit.wants_project(batch_edit.clean_spec({"video_fx": "grain"}))
+    assert batch_edit.wants_project(batch_edit.clean_spec({"vignette": "0.3"}))
+    assert batch_edit.wants_project(batch_edit.clean_spec({"ai_intro": "on"}))
+
+
+def test_mix_gives_each_clip_a_different_effect_in_turn():
+    mix = batch_edit.clean_spec({"video_fx": "mix", "vignette": "0.4"})
+    picked = [batch_edit.spec_for_clip(mix, n)["video_fx"] for n in range(6)]
+    assert picked[:4] == list(batch_edit.MIX_EFFECTS) and picked[4] == picked[0]   # then it starts over
+    assert all(batch_edit.spec_for_clip(mix, n)["vignette"] == 0.4 for n in range(3))
+    fixed = batch_edit.clean_spec({"video_fx": "glow"})
+    assert batch_edit.spec_for_clip(fixed, 3) is fixed                              # one effect for all
+
+
+def test_applying_a_mix_saves_a_different_effect_on_each_clip(client):
+    for n in range(3):
+        _clip(f"5-0{n}", "PREVIEW")
+    res = client.post("/clips/batch-edit", data={"ids": ["5-00", "5-01", "5-02"], "video_fx": "mix"})
+    assert res.status_code in (200, 303)
+    effects = [db.get(f"5-0{n}")["info"]["batch_edit"]["video_fx"] for n in range(3)]
+    assert effects == list(batch_edit.MIX_EFFECTS[:3])
+
+
+def test_the_page_offers_effects_and_a_vignette(client):
+    _clip("6-01", "PREVIEW")
+    page = client.get("/clips/batch-edit", params={"ids": ["6-01"]}).text
+    assert 'name="video_fx"' in page and 'value="mix"' in page and "Film grain" in page
+    assert 'name="vignette"' in page
+
+
+@needs_ffmpeg
+def test_worker_renders_a_batch_clip_with_effect_and_vignette(fresh_db, tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "JOBS_DIR", tmp_path / "jobs")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
+    _clip("7-01", "TRANSFORMED")
+    job_dir = config.job_dir("7-01")
+    make_clip(job_dir / "transformed.mp4", seconds=3, size="1080x1920")
+    spec = batch_edit.clean_spec({"video_fx": "vhs", "vignette": "0.6", "quality": "draft"})
+    db.update("7-01", info={"title": "t", "render_from": "batch", "batch_edit": spec})
+    worker.render_edit(db.get("7-01"), config.load())
+    assert (job_dir / "final.mp4").exists()
+    saved = db.get("7-01")["edit"]
+    assert saved["version"] == 2 and saved["look"]["effect"] == "vhs" and saved["look"]["vignette"] == 0.6
+    assert (tmp_path / "data" / "vignettes" / "vignette_60.png").exists()
+
+
+@needs_ffmpeg
+def test_a_failed_intro_still_gets_the_effect(fresh_db, tmp_path, monkeypatch):
+    from clipper import intro
+
+    monkeypatch.setattr(config, "JOBS_DIR", tmp_path / "jobs")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
+    _clip("8-01", "TRANSFORMED")
+    job_dir = config.job_dir("8-01")
+    make_clip(job_dir / "transformed.mp4", seconds=3, size="1080x1920")
+    spec = batch_edit.clean_spec({"ai_intro": "on", "video_fx": "grain", "quality": "draft"})
+    db.update("8-01", info={"title": "t", "render_from": "batch", "batch_edit": spec})
+
+    def broken(job, d, cfg, text=""):
+        raise intro.VoiceError("every key is busy")
+    monkeypatch.setattr(intro, "make_intro", broken)
+    worker.render_edit(db.get("8-01"), config.load())
+    job = db.get("8-01")
+    assert (job_dir / "final.mp4").exists() and "every key is busy" in job["info"]["intro_error"]
+    assert job["edit"]["version"] == 2 and job["edit"]["look"]["effect"] == "grain"

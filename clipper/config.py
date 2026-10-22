@@ -43,10 +43,10 @@ DEFAULTS = {
     # Translucent text watermark burned onto the posted video (e.g. your @username).
     "watermark": {"enabled": False, "text": "", "opacity": 0.35, "position": "bottom-right", "size": 4},
     "music": {"default_volume": 0.18, "ducking": True},
-    # Who writes the subtitles/captions: "gemini" listens to the clip (best for Nigerian English,
-    # Pidgin and Yoruba/Igbo/Hausa; falls back to the on-device model if Gemini is unreachable);
-    # "parakeet" uses only the on-device model.
-    "captions": {"engine": "gemini"},
+    # Who writes the on-screen subtitles: "parakeet" is the on-device model (default; Gemini can still
+    # fix its wording per batch); "gemini" listens to the clip instead (best for Pidgin and
+    # Yoruba/Igbo/Hausa; falls back to the on-device model if Gemini is unreachable).
+    "captions": {"engine": "parakeet"},
     "upload_post": {"profile": "", "platforms": ["tiktok", "instagram", "x"],
                     "tiktok_privacy_level": "SELF_ONLY", "ai_label": True},
     "dashboard": {"host": "127.0.0.1", "port": 8000, "open_browser": True},
